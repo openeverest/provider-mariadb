@@ -143,7 +143,7 @@ func SyncMariaDB(c *controller.Context) error {
 		mariadbCR.Spec.MyCnf = myCnf
 		mariadbCR.Spec.PrimaryService = primaryService
 		if resourceReqs != nil {
-			mariadbCR.Spec.ContainerTemplate.Resources = resourceReqs
+			mariadbCR.Spec.Resources = resourceReqs
 		}
 	}
 
