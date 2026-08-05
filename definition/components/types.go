@@ -8,10 +8,11 @@ package components
 
 // MariadbParameters defines optional per-component parameters for MariaDB engine nodes.
 type MariadbParameters struct {
-	// MyCnf is additional MariaDB configuration to be appended to the default my.cnf.
-	// Content is passed verbatim to the operator's spec.myCnf field.
+	// Configuration is additional MariaDB configuration appended to the default my.cnf.
+	// `configuration` is the conventional engine-config property name across providers;
+	// the content is passed verbatim to the operator's spec.myCnf field.
 	// +optional
-	MyCnf string `json:"myCnf,omitempty"`
+	Configuration string `json:"configuration,omitempty"`
 }
 
 // MonitoringParameters defines parameters for the monitoring component.
