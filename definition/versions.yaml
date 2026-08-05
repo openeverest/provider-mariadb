@@ -10,6 +10,11 @@ componentTypes:
       default: true
     - version: "11.8"
       image: mariadb:11.8
+  mysqld-exporter:
+    versions:
+    - version: "0.15.1"
+      image: prom/mysqld-exporter:v0.15.1
+      default: true
 
 # Version bundles — curated sets of component versions known to work together.
 # Users set spec.version on an Instance to select a bundle.
@@ -19,6 +24,8 @@ versions:
   default: true
   components:
     engine: "11.4"
+    monitoring: "0.15.1"
 - name: "11.8"
   components:
     engine: "11.8"
+    monitoring: "0.15.1"

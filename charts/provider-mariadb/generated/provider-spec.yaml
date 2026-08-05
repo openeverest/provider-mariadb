@@ -9,9 +9,16 @@ spec:
           version: "11.4"
         - image: mariadb:11.8
           version: "11.8"
+    mysqld-exporter:
+      versions:
+        - default: true
+          image: prom/mysqld-exporter:v0.15.1
+          version: 0.15.1
   components:
     engine:
       type: mariadb
+    monitoring:
+      type: mysqld-exporter
   topologies:
     standalone:
       components:
@@ -151,8 +158,10 @@ spec:
   versions:
     - components:
         engine: "11.4"
+        monitoring: 0.15.1
       default: true
       name: "11.4"
     - components:
         engine: "11.8"
+        monitoring: 0.15.1
       name: "11.8"

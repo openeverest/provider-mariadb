@@ -13,3 +13,11 @@ type MariadbParameters struct {
 	// +optional
 	MyCnf string `json:"myCnf,omitempty"`
 }
+
+// MonitoringParameters defines parameters for the monitoring component.
+type MonitoringParameters struct {
+	// MonitoringConfigName is the name of the MonitoringConfig resource to use.
+	// If not specified, monitoring is not configured.
+	// +optional
+	MonitoringConfigName *string `json:"monitoringConfigName,omitempty"`
+}
