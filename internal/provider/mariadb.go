@@ -27,6 +27,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/log"
 
+	corev1alpha1 "github.com/openeverest/openeverest/v2/api/core/v1alpha1"
 	"github.com/openeverest/openeverest/v2/provider-runtime/controller"
 
 	"github.com/openeverest/provider-mariadb/definition/components"
@@ -115,6 +116,10 @@ func SyncMariaDB(c *controller.Context) error {
 		myCnf = &params.MyCnf
 	}
 
+	// Exposure: map the requested Service onto the primary Service, which is the
+	// endpoint clients connect to.
+	primaryService := configureService(engine.Service)
+
 	// Read-modify-write: c.Apply performs a full Update, so we must start from
 	// the operator's current object and overlay only the fields we manage.
 	// Building a bare spec here would wipe every operator-defaulted field
@@ -128,7 +133,7 @@ func SyncMariaDB(c *controller.Context) error {
 
 	var mariadbCR *mariadbv1alpha1.MariaDB
 	if apierrors.IsNotFound(err) {
-		mariadbCR = buildInitialMariaDB(c, image, replicas, storageSize, storageClassName, resourceReqs, myCnf)
+		mariadbCR = buildInitialMariaDB(c, image, replicas, storageSize, storageClassName, resourceReqs, myCnf, primaryService)
 	} else {
 		// Overlay only the managed, mutable fields; preserve operator defaults.
 		mariadbCR = existing
@@ -136,6 +141,7 @@ func SyncMariaDB(c *controller.Context) error {
 		mariadbCR.Spec.Replicas = replicas
 		mariadbCR.Spec.Storage.Size = &storageSize
 		mariadbCR.Spec.MyCnf = myCnf
+		mariadbCR.Spec.PrimaryService = primaryService
 		if resourceReqs != nil {
 			mariadbCR.Spec.ContainerTemplate.Resources = resourceReqs
 		}
@@ -158,6 +164,7 @@ func buildInitialMariaDB(
 	storageClassName string,
 	resourceReqs *mariadbv1alpha1.ResourceRequirements,
 	myCnf *string,
+	primaryService *mariadbv1alpha1.ServiceTemplate,
 ) *mariadbv1alpha1.MariaDB {
 	storage := mariadbv1alpha1.Storage{
 		Size:      &storageSize,
@@ -199,11 +206,39 @@ func buildInitialMariaDB(
 			Username:                 &initialUser,
 			Database:                 &initialDB,
 			PasswordSecretKeyRef:     passwordRef,
+			PrimaryService:           primaryService,
 			ContainerTemplate: mariadbv1alpha1.ContainerTemplate{
 				Resources: resourceReqs,
 			},
 		},
 	}
+}
+
+// configureService maps the SDK Service exposure request onto the operator's
+// ServiceTemplate. Returns nil when no exposure is requested (operator defaults
+// to a ClusterIP Service).
+func configureService(svc *corev1alpha1.Service) *mariadbv1alpha1.ServiceTemplate {
+	if svc == nil {
+		return nil
+	}
+
+	serviceType := svc.ServiceType
+	if serviceType == "" {
+		serviceType = corev1.ServiceTypeClusterIP
+	}
+
+	tmpl := &mariadbv1alpha1.ServiceTemplate{
+		Type: serviceType,
+	}
+	if len(svc.Annotations) > 0 {
+		tmpl.Metadata = &mariadbv1alpha1.Metadata{Annotations: svc.Annotations}
+	}
+	if serviceType == corev1.ServiceTypeLoadBalancer &&
+		svc.LoadBalancerService != nil &&
+		svc.LoadBalancerService.SourceRanges != nil {
+		tmpl.LoadBalancerSourceRanges = svc.LoadBalancerService.SourceRanges.NormalizedSourceRanges()
+	}
+	return tmpl
 }
 
 // StatusMariaDB reads the MariaDB CR status and translates it to an Instance status.
@@ -218,12 +253,12 @@ func StatusMariaDB(c *controller.Context) (controller.Status, error) {
 
 	// Check the Ready condition.
 	if mariadbCR.IsReady() {
-		host := fmt.Sprintf("%s-primary.%s.svc", c.Name(), c.Namespace())
-		details := controller.ConnectionDetails{
-			Type:     "mysql",
-			Host:     host,
-			Port:     strconv.Itoa(defaultPort),
-			Username: defaultInitialUser,
+		details, err := buildConnectionDetails(c)
+		if err != nil {
+			if apierrors.IsNotFound(err) {
+				return controller.Provisioning("Waiting for MariaDB credentials secret"), nil
+			}
+			return controller.Status{}, err
 		}
 		return controller.ReadyWithConnectionDetails(details), nil
 	}
@@ -234,6 +269,57 @@ func StatusMariaDB(c *controller.Context) (controller.Status, error) {
 	}
 
 	return controller.Provisioning("Waiting for MariaDB cluster to be ready"), nil
+}
+
+// buildConnectionDetails reads the generated user credentials secret and combines
+// it with the primary Service host to produce a full set of connection details.
+func buildConnectionDetails(c *controller.Context) (controller.ConnectionDetails, error) {
+	secret := &corev1.Secret{}
+	if err := c.Get(secret, rootPasswordSecretName(c.Name())); err != nil {
+		return controller.ConnectionDetails{}, fmt.Errorf("get credentials secret: %w", err)
+	}
+
+	host := resolvePrimaryHost(c)
+	port := strconv.Itoa(defaultPort)
+	username := defaultInitialUser
+	password := string(secret.Data[userPasswordSecretKey])
+
+	return controller.ConnectionDetails{
+		Type:     "mysql",
+		Provider: common.ProviderName,
+		Host:     host,
+		Port:     port,
+		Username: username,
+		Password: password,
+		URI: fmt.Sprintf(
+			"mysql://%s:%s@%s:%s/%s",
+			username, password, host, port, defaultInitialDatabase,
+		),
+	}, nil
+}
+
+// resolvePrimaryHost returns the externally reachable host for the primary
+// Service: a LoadBalancer ingress address when available, otherwise the internal
+// cluster FQDN.
+func resolvePrimaryHost(c *controller.Context) string {
+	internal := fmt.Sprintf("%s-primary.%s.svc", c.Name(), c.Namespace())
+
+	svc := &corev1.Service{}
+	if err := c.Get(svc, c.Name()+"-primary"); err != nil {
+		return internal
+	}
+	if svc.Spec.Type != corev1.ServiceTypeLoadBalancer {
+		return internal
+	}
+	for _, ing := range svc.Status.LoadBalancer.Ingress {
+		if ing.IP != "" {
+			return ing.IP
+		}
+		if ing.Hostname != "" {
+			return ing.Hostname
+		}
+	}
+	return internal
 }
 
 // CleanupMariaDB deletes the MariaDB CR when the Instance is being deleted.
