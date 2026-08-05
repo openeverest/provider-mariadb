@@ -51,10 +51,19 @@ const (
 	defaultInitialUser = "everest"
 )
 
-// rootPasswordSecretName returns the name of the Secret holding the root password
-// for the given instance. Follows the OpenEverest convention used across providers.
-func rootPasswordSecretName(instanceName string) string {
+// userSecretName returns the name of the Secret holding the initial user's password
+// for the given instance. Follows the OpenEverest convention used across providers and
+// is the Secret surfaced through the connection details.
+func userSecretName(instanceName string) string {
 	return "everest-secrets-" + instanceName
+}
+
+// rootSecretName returns the name of the Secret holding the root password for the given
+// instance. The root password lives in a dedicated Secret because the operator generates
+// each password Secret only when the whole Secret is absent, so root and user passwords
+// cannot share a single Secret.
+func rootSecretName(instanceName string) string {
+	return "everest-secrets-" + instanceName + "-root"
 }
 
 // SyncMariaDB creates or updates the MariaDB CR based on the Instance spec.
@@ -174,10 +183,9 @@ func buildInitialMariaDB(
 		storage.StorageClassName = storageClassName
 	}
 
-	secretName := rootPasswordSecretName(c.Name())
 	rootRef := mariadbv1alpha1.GeneratedSecretKeyRef{
 		SecretKeySelector: mariadbv1alpha1.SecretKeySelector{
-			LocalObjectReference: mariadbv1alpha1.LocalObjectReference{Name: secretName},
+			LocalObjectReference: mariadbv1alpha1.LocalObjectReference{Name: rootSecretName(c.Name())},
 			Key:                  rootPasswordSecretKey,
 		},
 		Generate: true,
@@ -187,7 +195,7 @@ func buildInitialMariaDB(
 	initialDB := defaultInitialDatabase
 	passwordRef := &mariadbv1alpha1.GeneratedSecretKeyRef{
 		SecretKeySelector: mariadbv1alpha1.SecretKeySelector{
-			LocalObjectReference: mariadbv1alpha1.LocalObjectReference{Name: secretName},
+			LocalObjectReference: mariadbv1alpha1.LocalObjectReference{Name: userSecretName(c.Name())},
 			Key:                  userPasswordSecretKey,
 		},
 		Generate: true,
@@ -275,7 +283,7 @@ func StatusMariaDB(c *controller.Context) (controller.Status, error) {
 // it with the primary Service host to produce a full set of connection details.
 func buildConnectionDetails(c *controller.Context) (controller.ConnectionDetails, error) {
 	secret := &corev1.Secret{}
-	if err := c.Get(secret, rootPasswordSecretName(c.Name())); err != nil {
+	if err := c.Get(secret, userSecretName(c.Name())); err != nil {
 		return controller.ConnectionDetails{}, fmt.Errorf("get credentials secret: %w", err)
 	}
 
