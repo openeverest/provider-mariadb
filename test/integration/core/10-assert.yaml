@@ -1,21 +1,30 @@
 # Expected outcome of the create-instance step.
 #
-# Assert both the accepted Instance spec and the operator-native CR the
-# provider must create from it. Chainsaw asserts are partial: only the
-# fields listed here are checked.
+# Assert both the accepted Instance and the MariaDB CR the provider creates
+# from it. Chainsaw asserts are partial: only the fields listed here are
+# checked. The password refs verify that root and initial-user passwords land
+# in separate Secrets so the operator generates both keys.
 apiVersion: core.openeverest.io/v1alpha1
 kind: Instance
 metadata:
   name: test-instance
 spec:
   providerRef:
-    name: provider-mariadb
-# TODO: assert the operator-native CR produced by Sync(), e.g.:
-# ---
-# apiVersion: <operator-api-group>/v1
-# kind: <OperatorKind>
-# metadata:
-#   name: test-instance
-# spec:
-#   replicas: 1
-#   ...
+    name: mariadb
+---
+apiVersion: k8s.mariadb.com/v1alpha1
+kind: MariaDB
+metadata:
+  name: test-instance
+spec:
+  replicas: 1
+  username: everest
+  database: everest
+  rootPasswordSecretKeyRef:
+    name: everest-secrets-test-instance-root
+    key: root-password
+    generate: true
+  passwordSecretKeyRef:
+    name: everest-secrets-test-instance
+    key: password
+    generate: true

@@ -125,9 +125,10 @@ func SyncMariaDB(c *controller.Context) error {
 		myCnf = &params.Configuration
 	}
 
-	// Exposure: map the requested Service onto the primary Service, which is the
-	// endpoint clients connect to.
-	primaryService := configureService(engine.Service)
+	// Exposure: map the requested Service onto the general Service (<name>). The
+	// primary Service (<name>-primary) only exists for replication/Galera; for a
+	// standalone instance the general Service is the endpoint clients connect to.
+	generalService := configureService(engine.Service)
 
 	// Read-modify-write: c.Apply performs a full Update, so we must start from
 	// the operator's current object and overlay only the fields we manage.
@@ -142,7 +143,7 @@ func SyncMariaDB(c *controller.Context) error {
 
 	var mariadbCR *mariadbv1alpha1.MariaDB
 	if apierrors.IsNotFound(err) {
-		mariadbCR = buildInitialMariaDB(c, image, replicas, storageSize, storageClassName, resourceReqs, myCnf, primaryService)
+		mariadbCR = buildInitialMariaDB(c, image, replicas, storageSize, storageClassName, resourceReqs, myCnf, generalService)
 	} else {
 		// Overlay only the managed, mutable fields; preserve operator defaults.
 		mariadbCR = existing
@@ -150,7 +151,7 @@ func SyncMariaDB(c *controller.Context) error {
 		mariadbCR.Spec.Replicas = replicas
 		mariadbCR.Spec.Storage.Size = &storageSize
 		mariadbCR.Spec.MyCnf = myCnf
-		mariadbCR.Spec.PrimaryService = primaryService
+		mariadbCR.Spec.Service = generalService
 		if resourceReqs != nil {
 			mariadbCR.Spec.Resources = resourceReqs
 		}
@@ -173,7 +174,7 @@ func buildInitialMariaDB(
 	storageClassName string,
 	resourceReqs *mariadbv1alpha1.ResourceRequirements,
 	myCnf *string,
-	primaryService *mariadbv1alpha1.ServiceTemplate,
+	generalService *mariadbv1alpha1.ServiceTemplate,
 ) *mariadbv1alpha1.MariaDB {
 	storage := mariadbv1alpha1.Storage{
 		Size:      &storageSize,
@@ -214,7 +215,11 @@ func buildInitialMariaDB(
 			Username:                 &initialUser,
 			Database:                 &initialDB,
 			PasswordSecretKeyRef:     passwordRef,
-			PrimaryService:           primaryService,
+			Service:                  generalService,
+			// The operator enables mutual TLS by default, which would require
+			// clients to present a certificate. The connection details we emit
+			// only carry username/password, so disable TLS to keep them usable.
+			TLS: &mariadbv1alpha1.TLS{Enabled: false},
 			ContainerTemplate: mariadbv1alpha1.ContainerTemplate{
 				Resources: resourceReqs,
 			},
@@ -287,7 +292,7 @@ func buildConnectionDetails(c *controller.Context) (controller.ConnectionDetails
 		return controller.ConnectionDetails{}, fmt.Errorf("get credentials secret: %w", err)
 	}
 
-	host := resolvePrimaryHost(c)
+	host := resolveHost(c)
 	port := strconv.Itoa(defaultPort)
 	username := defaultInitialUser
 	password := string(secret.Data[userPasswordSecretKey])
@@ -306,14 +311,14 @@ func buildConnectionDetails(c *controller.Context) (controller.ConnectionDetails
 	}, nil
 }
 
-// resolvePrimaryHost returns the externally reachable host for the primary
-// Service: a LoadBalancer ingress address when available, otherwise the internal
-// cluster FQDN.
-func resolvePrimaryHost(c *controller.Context) string {
-	internal := fmt.Sprintf("%s-primary.%s.svc", c.Name(), c.Namespace())
+// resolveHost returns the externally reachable host for the general Service
+// (<name>): a LoadBalancer ingress address when available, otherwise the
+// internal cluster FQDN.
+func resolveHost(c *controller.Context) string {
+	internal := fmt.Sprintf("%s.%s.svc", c.Name(), c.Namespace())
 
 	svc := &corev1.Service{}
-	if err := c.Get(svc, c.Name()+"-primary"); err != nil {
+	if err := c.Get(svc, c.Name()); err != nil {
 		return internal
 	}
 	if svc.Spec.Type != corev1.ServiceTypeLoadBalancer {

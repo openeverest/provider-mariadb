@@ -1,4 +1,4 @@
-name: Build and Push Dev Image
+name: Publish dev image
 
 on:
   push:
