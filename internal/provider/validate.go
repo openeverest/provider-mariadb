@@ -37,6 +37,11 @@ func ValidateMariaDB(c *controller.Context) error {
 		return fmt.Errorf("component validation: %w", err)
 	}
 
+	if _, err := resolveMonitoringConfig(c); err != nil {
+		l.Error(err, "Monitoring validation failed", "name", c.Name())
+		return fmt.Errorf("monitoring validation: %w", err)
+	}
+
 	return nil
 }
 
