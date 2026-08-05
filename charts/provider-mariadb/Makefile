@@ -24,5 +24,7 @@ release-dev: prepare-chart
 .PHONY: deps
 deps:
 	$(HELM) version
-	# Resolve the bundled mariadb-operator subcharts from Chart.lock.
+	# The subcharts live in the mariadb-operator Helm repo; register it so
+	# `helm dependency build` can resolve them.
+	$(HELM) repo add mariadb-operator https://mariadb-operator.github.io/mariadb-operator --force-update
 	$(HELM) dependency build .

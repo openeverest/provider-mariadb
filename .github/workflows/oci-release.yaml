@@ -51,7 +51,9 @@ jobs:
           esac
 
       - name: Build chart dependencies
-        run: helm dependency build "$CHART_DIR"
+        run: |
+          helm repo add mariadb-operator https://mariadb-operator.github.io/mariadb-operator --force-update
+          helm dependency build "$CHART_DIR"
 
       - name: Package Helm chart
         run: |
