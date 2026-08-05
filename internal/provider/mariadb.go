@@ -109,11 +109,11 @@ func SyncMariaDB(c *controller.Context) error {
 		}
 	}
 
-	// Optional myCnf from component parameters.
+	// Optional my.cnf from the engine component's `configuration` parameter.
 	var myCnf *string
 	var params components.MariadbParameters
-	if c.TryDecodeComponentParameters(engine, &params) && params.MyCnf != "" {
-		myCnf = &params.MyCnf
+	if c.TryDecodeComponentParameters(engine, &params) && params.Configuration != "" {
+		myCnf = &params.Configuration
 	}
 
 	// Exposure: map the requested Service onto the primary Service, which is the
