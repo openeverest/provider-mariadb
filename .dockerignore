@@ -1,0 +1,8 @@
+# generated binaries
+# Keep the provider binary for dev/provider.Dockerfile builds.
+bin/*
+!bin/provider
+# Helm chart dependencies
+charts/
+# test artifacts
+/tmp/

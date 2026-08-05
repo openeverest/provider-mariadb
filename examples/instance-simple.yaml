@@ -1,0 +1,14 @@
+# Minimal Instance CR — smallest viable configuration.
+apiVersion: core.openeverest.io/v1alpha1
+kind: Instance
+metadata:
+  name: my-database-simple
+spec:
+  providerRef:
+    name: provider-mariadb
+  components:
+    engine:
+      type: 
+      replicas: 1
+      storage:
+        size: 10Gi
