@@ -17,9 +17,11 @@ package provider
 import (
 	"fmt"
 
+	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/resource"
 	"sigs.k8s.io/controller-runtime/pkg/log"
 
+	corev1alpha1 "github.com/openeverest/openeverest/v2/api/core/v1alpha1"
 	"github.com/openeverest/openeverest/v2/provider-runtime/controller"
 
 	"github.com/openeverest/provider-mariadb/internal/common"
@@ -55,7 +57,30 @@ func validateComponents(c *controller.Context) error {
 		}
 	}
 
+	if err := validateService(engine.Service); err != nil {
+		return err
+	}
+
 	return nil
+}
+
+// validateService ensures the requested Service type is one the operator supports.
+func validateService(svc *corev1alpha1.Service) error {
+	if svc == nil || svc.ServiceType == "" {
+		return nil
+	}
+
+	switch svc.ServiceType {
+	case corev1.ServiceTypeClusterIP,
+		corev1.ServiceTypeLoadBalancer,
+		corev1.ServiceTypeNodePort:
+		return nil
+	default:
+		return fmt.Errorf(
+			"spec.components.%s.service.serviceType must be one of ClusterIP, LoadBalancer or NodePort",
+			common.ComponentEngine,
+		)
+	}
 }
 
 // mustParseQuantity is a helper that panics on invalid quantity strings (compile-time constants only).
