@@ -32,6 +32,19 @@ spec:
                   max_connections=100
               path: spec.components.engine.config
               uiType: text
+            externalAccess:
+              fieldParams:
+                defaultValue: ClusterIP
+                label: External access
+                options:
+                  - label: ClusterIP
+                    value: ClusterIP
+                  - label: LoadBalancer
+                    value: LoadBalancer
+                  - label: NodePort
+                    value: NodePort
+              path: spec.components.engine.service.serviceType
+              uiType: select
             storageClass:
               dataSource:
                 provider: storageClasses
@@ -44,6 +57,7 @@ spec:
               uiType: select
           componentsOrder:
             - storageClass
+            - externalAccess
             - configuration
           description: Configure storage class and optional MariaDB settings.
           label: Advanced configuration
