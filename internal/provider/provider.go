@@ -20,8 +20,6 @@ import (
 	mariadbv1alpha1 "github.com/mariadb-operator/mariadb-operator/v26/api/v1alpha1"
 	"k8s.io/apimachinery/pkg/runtime"
 
-	corev1alpha1 "github.com/openeverest/openeverest/v2/api/core/v1alpha1"
-	monitoringv1alpha1 "github.com/openeverest/openeverest/v2/api/monitoring/v1alpha1"
 	"github.com/openeverest/openeverest/v2/provider-runtime/controller"
 
 	"github.com/openeverest/provider-mariadb/internal/common"
@@ -42,7 +40,6 @@ func New() *MariaDBProvider {
 			ProviderName: common.ProviderName,
 			SchemeFuncs: []func(*runtime.Scheme) error{
 				mariadbv1alpha1.AddToScheme,
-				monitoringv1alpha1.AddToScheme,
 			},
 			WatchConfigs: []controller.WatchConfig{
 				// Re-enqueue the Instance when its owned MariaDB CR changes
@@ -73,16 +70,4 @@ func (p *MariaDBProvider) Status(c *controller.Context) (controller.Status, erro
 // Owner references handle cascaded cleanup of child resources.
 func (p *MariaDBProvider) Cleanup(c *controller.Context) error {
 	return CleanupMariaDB(c)
-}
-
-// FieldIndexes registers indexes used to look up Instances by the
-// MonitoringConfig they reference.
-func (p *MariaDBProvider) FieldIndexes() []controller.FieldIndex {
-	return []controller.FieldIndex{
-		{
-			Object:    &corev1alpha1.Instance{},
-			FieldPath: monitoringConfigPath,
-			Extractor: extractMonitoringConfigName,
-		},
-	}
 }

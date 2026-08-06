@@ -88,6 +88,23 @@ spec:
                 required: true
           description: Select the MariaDB version to deploy.
           label: Database Version
+        monitoring:
+          components:
+            enabled:
+              fieldParams:
+                defaultValue: false
+                label: Enable metrics
+                options:
+                  - label: Disabled
+                    value: false
+                  - label: Enabled
+                    value: true
+              path: spec.components.monitoring.parameters.enabled
+              uiType: select
+          componentsOrder:
+            - enabled
+          description: Expose database metrics and integrate them with a Prometheus stack.
+          label: Monitoring
         resources:
           components:
             nodes:
@@ -154,6 +171,7 @@ spec:
       sectionsOrder:
         - databaseVersion
         - resources
+        - monitoring
         - advanced
   versions:
     - components:

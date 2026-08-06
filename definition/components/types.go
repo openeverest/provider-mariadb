@@ -16,9 +16,47 @@ type MariadbParameters struct {
 }
 
 // MonitoringParameters defines parameters for the monitoring component.
+//
+// The monitoring component maps onto the mariadb-operator's spec.metrics: it
+// deploys a mysqld-exporter sidecar and, via ServiceMonitor, integrates with a
+// Prometheus Operator stack. Both are opt-in and default to off.
 type MonitoringParameters struct {
-	// MonitoringConfigName is the name of the MonitoringConfig resource to use.
-	// If not specified, monitoring is not configured.
+	// Enabled turns on the MariaDB metrics exporter (mysqld-exporter). When
+	// false or unset, no exporter is deployed and no Prometheus objects are
+	// created. Defaults to false.
 	// +optional
-	MonitoringConfigName *string `json:"monitoringConfigName,omitempty"`
+	Enabled bool `json:"enabled,omitempty"`
+	// ServiceMonitor controls the creation of a Prometheus Operator
+	// ServiceMonitor object that scrapes the exporter. Creating it requires the
+	// ServiceMonitor CRD (monitoring.coreos.com) to be installed in the cluster.
+	//
+	// Note: the underlying mariadb-operator currently couples exporter and
+	// ServiceMonitor reconciliation, so a ServiceMonitor is always created while
+	// metrics are enabled, regardless of ServiceMonitor.Enabled.
+	// +optional
+	ServiceMonitor ServiceMonitorParameters `json:"serviceMonitor,omitempty"`
+}
+
+// ServiceMonitorParameters configures the Prometheus ServiceMonitor object
+// created for the exporter. All fields are optional; the mariadb-operator and
+// Prometheus apply sensible defaults when they are unset.
+type ServiceMonitorParameters struct {
+	// Enabled controls whether a Prometheus ServiceMonitor is created for the
+	// exporter. Defaults to false. It is automatically enabled while metrics are
+	// enabled, since the mariadb-operator reconciles the two together.
+	// +optional
+	Enabled bool `json:"enabled,omitempty"`
+	// PrometheusRelease is the value of the `release` label added to the
+	// ServiceMonitor so a Prometheus instance selecting on it picks the target up.
+	// +optional
+	PrometheusRelease string `json:"prometheusRelease,omitempty"`
+	// JobLabel is the label to use as the Prometheus job name for the target.
+	// +optional
+	JobLabel string `json:"jobLabel,omitempty"`
+	// Interval at which Prometheus scrapes the exporter (e.g. "10s").
+	// +optional
+	Interval string `json:"interval,omitempty"`
+	// ScrapeTimeout is the timeout for a single scrape (e.g. "10s").
+	// +optional
+	ScrapeTimeout string `json:"scrapeTimeout,omitempty"`
 }
