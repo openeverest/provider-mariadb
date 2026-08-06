@@ -37,11 +37,32 @@ func ValidateMariaDB(c *controller.Context) error {
 		return fmt.Errorf("component validation: %w", err)
 	}
 
-	if _, err := resolveMonitoringConfig(c); err != nil {
+	if err := validateMonitoring(c); err != nil {
 		l.Error(err, "Monitoring validation failed", "name", c.Name())
 		return fmt.Errorf("monitoring validation: %w", err)
 	}
 
+	return nil
+}
+
+// validateMonitoring ensures the monitoring component parameters are decodable
+// and, when metrics are enabled, that an exporter image can be resolved.
+func validateMonitoring(c *controller.Context) error {
+	params, err := monitoringParams(c)
+	if err != nil {
+		return err
+	}
+	if params == nil || !params.Enabled {
+		return nil
+	}
+
+	image, err := resolveExporterImage(c)
+	if err != nil {
+		return err
+	}
+	if image == "" {
+		return fmt.Errorf("unable to resolve a mysqld-exporter image for the monitoring component")
+	}
 	return nil
 }
 

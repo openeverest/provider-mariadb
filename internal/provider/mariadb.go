@@ -130,13 +130,20 @@ func SyncMariaDB(c *controller.Context) error {
 	// standalone instance the general Service is the endpoint clients connect to.
 	generalService := configureService(engine.Service)
 
+	// Metrics: map the optional monitoring component onto spec.metrics. Nil when
+	// monitoring is not enabled, so the operator deploys no exporter.
+	metrics, err := buildMetrics(c)
+	if err != nil {
+		return fmt.Errorf("build metrics: %w", err)
+	}
+
 	// Read-modify-write: c.Apply performs a full Update, so we must start from
 	// the operator's current object and overlay only the fields we manage.
 	// Building a bare spec here would wipe every operator-defaulted field
 	// (probes, security context, updateStrategy, TLS, ...) on each reconcile,
 	// causing an endless rolling update of the StatefulSet.
 	existing := &mariadbv1alpha1.MariaDB{}
-	err := c.Get(existing, c.Name())
+	err = c.Get(existing, c.Name())
 	if err != nil && !apierrors.IsNotFound(err) {
 		return fmt.Errorf("get MariaDB: %w", err)
 	}
@@ -144,6 +151,7 @@ func SyncMariaDB(c *controller.Context) error {
 	var mariadbCR *mariadbv1alpha1.MariaDB
 	if apierrors.IsNotFound(err) {
 		mariadbCR = buildInitialMariaDB(c, image, replicas, storageSize, storageClassName, resourceReqs, myCnf, generalService)
+		mariadbCR.Spec.Metrics = metrics
 	} else {
 		// Overlay only the managed, mutable fields; preserve operator defaults.
 		mariadbCR = existing
@@ -152,6 +160,7 @@ func SyncMariaDB(c *controller.Context) error {
 		mariadbCR.Spec.Storage.Size = &storageSize
 		mariadbCR.Spec.MyCnf = myCnf
 		mariadbCR.Spec.Service = generalService
+		mariadbCR.Spec.Metrics = metrics
 		if resourceReqs != nil {
 			mariadbCR.Spec.Resources = resourceReqs
 		}

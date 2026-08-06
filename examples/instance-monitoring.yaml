@@ -1,0 +1,45 @@
+# Example Instance CR for the provider-mariadb provider with monitoring enabled.
+# Apply this to your cluster to create a database instance that exposes metrics
+# and registers a Prometheus ServiceMonitor.
+#
+# Prerequisites:
+#   1. OpenEverest CRDs installed
+#   2. Provider CR applied (provider.yaml)
+#   3. Operator running
+#   4. Provider controller running
+#   5. The ServiceMonitor CRD (monitoring.coreos.com) present in the cluster —
+#      e.g. from the kube-prometheus-stack. The mariadb-operator couples the
+#      exporter with a ServiceMonitor, so metrics require this CRD.
+apiVersion: core.openeverest.io/v1alpha1
+kind: Instance
+metadata:
+  name: example-instance-monitoring
+spec:
+  providerRef:
+    name: provider-mariadb
+  components:
+    engine:
+      type:
+      replicas: 1
+      resources:
+        limits:
+          cpu: "1"
+          memory: 2G
+      storage:
+        size: 10Gi
+    # The monitoring component is opt-in. Omit it entirely to disable metrics.
+    monitoring:
+      # Optional: override the mysqld-exporter image. When unset, the provider
+      # resolves it from the selected version or the provider default.
+      # image: prom/mysqld-exporter:v0.15.1
+      parameters:
+        # Enable metrics exposure. Enabling this deploys the exporter and (given
+        # the operator coupling) a ServiceMonitor for Prometheus scraping.
+        enabled: true
+        serviceMonitor:
+          # Label selector value Prometheus uses to discover ServiceMonitors,
+          # e.g. the kube-prometheus-stack release name.
+          prometheusRelease: kube-prometheus-stack
+          # Optional scrape tuning.
+          interval: 30s
+          scrapeTimeout: 10s

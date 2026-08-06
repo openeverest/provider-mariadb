@@ -15,27 +15,20 @@
 package provider
 
 import (
-	"encoding/json"
 	"fmt"
 
-	"sigs.k8s.io/controller-runtime/pkg/client"
+	mariadbv1alpha1 "github.com/mariadb-operator/mariadb-operator/v26/api/v1alpha1"
 
-	corev1alpha1 "github.com/openeverest/openeverest/v2/api/core/v1alpha1"
-	monitoringv1alpha1 "github.com/openeverest/openeverest/v2/api/monitoring/v1alpha1"
 	"github.com/openeverest/openeverest/v2/provider-runtime/controller"
 
 	"github.com/openeverest/provider-mariadb/definition/components"
 	"github.com/openeverest/provider-mariadb/internal/common"
 )
 
-// monitoringConfigPath is the field index path used to look up Instances by the
-// name of the MonitoringConfig their monitoring component references.
-const monitoringConfigPath = ".spec.components.monitoring.monitoringConfigName"
-
-// resolveMonitoringConfig looks up the MonitoringConfig referenced by the
-// instance's monitoring component. It returns nil without error when the
-// monitoring component is absent, making monitoring opt-in.
-func resolveMonitoringConfig(c *controller.Context) (*monitoringv1alpha1.MonitoringConfig, error) {
+// monitoringParams decodes the monitoring component parameters from the
+// Instance. It returns nil when the monitoring component is absent, making
+// monitoring opt-in.
+func monitoringParams(c *controller.Context) (*components.MonitoringParameters, error) {
 	monitoring, ok := c.Instance().Spec.Components[common.ComponentMonitoring]
 	if !ok {
 		return nil, nil
@@ -45,40 +38,77 @@ func resolveMonitoringConfig(c *controller.Context) (*monitoringv1alpha1.Monitor
 	if err := c.DecodeComponentParameters(monitoring, &params); err != nil {
 		return nil, fmt.Errorf("decode monitoring parameters: %w", err)
 	}
-
-	if params.MonitoringConfigName == nil || *params.MonitoringConfigName == "" {
-		return nil, fmt.Errorf("monitoringConfigName is required when the monitoring component is set")
-	}
-
-	mc := &monitoringv1alpha1.MonitoringConfig{}
-	if err := c.Get(mc, *params.MonitoringConfigName); err != nil {
-		return nil, fmt.Errorf("get MonitoringConfig %q: %w", *params.MonitoringConfigName, err)
-	}
-
-	return mc, nil
+	return &params, nil
 }
 
-// extractMonitoringConfigName extracts the MonitoringConfig name referenced by
-// an Instance's monitoring component, for use as a field index value.
-func extractMonitoringConfigName(obj client.Object) []string {
-	in, ok := obj.(*corev1alpha1.Instance)
-	if !ok {
-		return nil
+// buildMetrics translates the monitoring component into the mariadb-operator's
+// spec.metrics. It returns nil when metrics are not enabled, so the operator
+// deploys no exporter and creates no Prometheus objects.
+//
+// The mariadb-operator couples the exporter and the ServiceMonitor: whenever
+// metrics are enabled it always reconciles a ServiceMonitor (and requires the
+// ServiceMonitor CRD to be present). We therefore treat "metrics enabled" as
+// implying ServiceMonitor creation, while still honoring the ServiceMonitor
+// scrape settings the user provides.
+func buildMetrics(c *controller.Context) (*mariadbv1alpha1.MariadbMetrics, error) {
+	params, err := monitoringParams(c)
+	if err != nil {
+		return nil, err
+	}
+	if params == nil || !params.Enabled {
+		return nil, nil
 	}
 
-	monitoring, ok := in.Spec.Components[common.ComponentMonitoring]
-	if !ok || monitoring.Parameters == nil || monitoring.Parameters.Raw == nil {
-		return nil
+	image, err := resolveExporterImage(c)
+	if err != nil {
+		return nil, err
 	}
 
-	var params components.MonitoringParameters
-	if err := json.Unmarshal(monitoring.Parameters.Raw, &params); err != nil {
-		return nil
+	metrics := &mariadbv1alpha1.MariadbMetrics{
+		Enabled: true,
+		Exporter: mariadbv1alpha1.Exporter{
+			Image: image,
+		},
+		ServiceMonitor: mariadbv1alpha1.ServiceMonitor{
+			PrometheusRelease: params.ServiceMonitor.PrometheusRelease,
+			JobLabel:          params.ServiceMonitor.JobLabel,
+			Interval:          params.ServiceMonitor.Interval,
+			ScrapeTimeout:     params.ServiceMonitor.ScrapeTimeout,
+		},
 	}
 
-	if params.MonitoringConfigName == nil || *params.MonitoringConfigName == "" {
-		return nil
+	monitoring := c.Instance().Spec.Components[common.ComponentMonitoring]
+	if monitoring.Resources != nil && (monitoring.Resources.Limits != nil || monitoring.Resources.Requests != nil) {
+		metrics.Exporter.Resources = &mariadbv1alpha1.ResourceRequirements{
+			Limits:   monitoring.Resources.Limits,
+			Requests: monitoring.Resources.Requests,
+		}
 	}
 
-	return []string{*params.MonitoringConfigName}
+	return metrics, nil
 }
+
+// resolveExporterImage resolves the mysqld-exporter image from the monitoring
+// component override, its selected version, or the provider default — mirroring
+// the engine image resolution precedence.
+func resolveExporterImage(c *controller.Context) (string, error) {
+	monitoring := c.Instance().Spec.Components[common.ComponentMonitoring]
+	if monitoring.Image != "" {
+		return monitoring.Image, nil
+	}
+
+	spec, err := c.ProviderSpec()
+	if err != nil {
+		return "", fmt.Errorf("get provider spec: %w", err)
+	}
+
+	image := ""
+	if monitoring.Version != "" {
+		image = controller.GetImageForVersion(spec, common.ComponentMonitoring, monitoring.Version)
+	}
+	if image == "" {
+		image = controller.GetDefaultImageForComponent(spec, common.ComponentMonitoring)
+	}
+	return image, nil
+}
+
