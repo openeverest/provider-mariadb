@@ -156,3 +156,35 @@ jobs:
               $PROD_IMAGE:latest-amd64 \
               $PROD_IMAGE:latest-arm64
           fi
+
+  finalize:
+    name: Update README version
+    needs: [prepare, create-manifests]
+    if: needs.prepare.outputs.is_rc == 'false'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: write
+    env:
+      VERSION: ${{ needs.prepare.outputs.version }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v4
+        with:
+          ref: main
+
+      - name: Configure Git
+        run: |
+          git config user.name "$GITHUB_ACTOR"
+          git config user.email "$GITHUB_ACTOR@users.noreply.github.com"
+
+      - name: Update install version in README
+        run: |
+          sed -i -E "s/--version [0-9]+\.[0-9]+\.[0-9]+/--version ${VERSION}/g" README.md
+          if git diff --quiet README.md; then
+            echo "README already at version $VERSION, nothing to commit"
+          else
+            git add README.md
+            git commit -m "docs: update install version to v$VERSION"
+            git push origin HEAD:main
+          fi
