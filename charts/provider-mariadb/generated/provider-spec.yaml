@@ -92,13 +92,13 @@ spec:
           components:
             enabled:
               fieldParams:
-                defaultValue: false
+                defaultValue: "false"
                 label: Enable metrics
                 options:
                   - label: Disabled
-                    value: false
+                    value: "false"
                   - label: Enabled
-                    value: true
+                    value: "true"
               path: spec.components.monitoring.parameters.enabled
               uiType: select
           componentsOrder:

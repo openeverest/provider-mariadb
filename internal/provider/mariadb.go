@@ -160,7 +160,7 @@ func SyncMariaDB(c *controller.Context) error {
 		mariadbCR.Spec.Storage.Size = &storageSize
 		mariadbCR.Spec.MyCnf = myCnf
 		mariadbCR.Spec.Service = generalService
-		mariadbCR.Spec.Metrics = metrics
+		applyMetricsOverlay(mariadbCR, metrics)
 		if resourceReqs != nil {
 			mariadbCR.Spec.Resources = resourceReqs
 		}

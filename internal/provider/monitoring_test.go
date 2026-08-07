@@ -157,3 +157,38 @@ func TestBuildMetrics_ExporterResources(t *testing.T) {
 		t.Errorf("unexpected cpu request: %q", got)
 	}
 }
+
+// The OpenEverest UI writes select values as strings, so `enabled` can arrive as
+// the quoted string "true" rather than a JSON bool. FlexBool must decode it.
+func TestBuildMetrics_EnabledAsString(t *testing.T) {
+	scheme := runtime.NewScheme()
+	if err := corev1alpha1.AddToScheme(scheme); err != nil {
+		t.Fatalf("add core scheme: %v", err)
+	}
+
+	instance := &corev1alpha1.Instance{
+		ObjectMeta: metav1.ObjectMeta{Name: "test", Namespace: "default"},
+		Spec: corev1alpha1.InstanceSpec{
+			Components: map[string]corev1alpha1.ComponentSpec{
+				common.ComponentMonitoring: {
+					Name:       common.ComponentMonitoring,
+					Type:       common.ComponentMonitoring,
+					Image:      "exporter:latest",
+					Parameters: &runtime.RawExtension{Raw: []byte(`{"enabled":"true"}`)},
+				},
+			},
+		},
+	}
+
+	c := fake.NewClientBuilder().WithScheme(scheme).WithObjects(instance).Build()
+	ctx := controller.NewContext(context.Background(), c, instance, common.ProviderName)
+
+	metrics, err := buildMetrics(ctx)
+	if err != nil {
+		t.Fatalf("unexpected error decoding string-valued enabled: %v", err)
+	}
+	if metrics == nil || !metrics.Enabled {
+		t.Fatal("expected metrics enabled when enabled is the string \"true\"")
+	}
+}
+

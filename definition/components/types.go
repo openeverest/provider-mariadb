@@ -6,6 +6,26 @@
 // +k8s:openapi-gen=true
 package components
 
+import "fmt"
+
+// FlexBool is a boolean that also decodes from the JSON strings "true"/"false".
+// The OpenEverest UI renders boolean toggles as string-valued `select` widgets,
+// so a value can arrive as either a JSON bool (API/preset) or a quoted string (UI).
+type FlexBool bool
+
+// UnmarshalJSON accepts a JSON bool or the quoted strings "true"/"false".
+func (b *FlexBool) UnmarshalJSON(data []byte) error {
+	switch string(data) {
+	case "true", `"true"`:
+		*b = true
+	case "false", `"false"`, `""`, "null":
+		*b = false
+	default:
+		return fmt.Errorf("invalid boolean value: %s", string(data))
+	}
+	return nil
+}
+
 // MariadbParameters defines optional per-component parameters for MariaDB engine nodes.
 type MariadbParameters struct {
 	// Configuration is additional MariaDB configuration appended to the default my.cnf.
@@ -25,7 +45,7 @@ type MonitoringParameters struct {
 	// false or unset, no exporter is deployed and no Prometheus objects are
 	// created. Defaults to false.
 	// +optional
-	Enabled bool `json:"enabled,omitempty"`
+	Enabled FlexBool `json:"enabled,omitempty"`
 	// ServiceMonitor controls the creation of a Prometheus Operator
 	// ServiceMonitor object that scrapes the exporter. Creating it requires the
 	// ServiceMonitor CRD (monitoring.coreos.com) to be installed in the cluster.
@@ -45,7 +65,7 @@ type ServiceMonitorParameters struct {
 	// exporter. Defaults to false. It is automatically enabled while metrics are
 	// enabled, since the mariadb-operator reconciles the two together.
 	// +optional
-	Enabled bool `json:"enabled,omitempty"`
+	Enabled FlexBool `json:"enabled,omitempty"`
 	// PrometheusRelease is the value of the `release` label added to the
 	// ServiceMonitor so a Prometheus instance selecting on it picks the target up.
 	// +optional
