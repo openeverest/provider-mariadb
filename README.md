@@ -1,5 +1,13 @@
 # MariaDB Provider
 
+> [!WARNING]
+> **Pre-alpha.** OpenEverest v2 and this provider are under active development. CRD schemas,
+> chart values and defaults change frequently, including in breaking ways, and there is no
+> supported upgrade path between versions yet. Not for production use.
+
+<!-- Remove the pre-alpha banner and the status badge at v2 GA. -->
+
+[![Status](https://img.shields.io/badge/status-pre--alpha-orange)](https://github.com/openeverest/openeverest)
 [![CI](https://github.com/openeverest/provider-mariadb/actions/workflows/ci.yaml/badge.svg?branch=main)](https://github.com/openeverest/provider-mariadb/actions/workflows/ci.yaml)
 [![Release](https://img.shields.io/github/v/release/openeverest/provider-mariadb)](https://github.com/openeverest/provider-mariadb/releases)
 [![Go Reference](https://pkg.go.dev/badge/github.com/openeverest/provider-mariadb.svg)](https://pkg.go.dev/github.com/openeverest/provider-mariadb)
@@ -44,12 +52,15 @@ manages pods directly — all lifecycle work is delegated to the operator.
 
 ## Capabilities
 
+What you can do to a running instance through the `Instance` API. Upgrading the
+provider itself is covered under [Installation](#installation).
+
 | Capability | Status | Notes |
 |---|---|---|
 | Provisioning | ✅ | |
 | Horizontal scaling | ✅ | `spec.components.engine.replicas` |
 | Vertical scaling (CPU / memory) | ✅ | `spec.components.engine.resources` |
-| Version upgrades | ✅ | change `spec.version`; see [Versions](#versions) |
+| Version upgrades | ✅ | of the deployed MariaDB version — change `spec.version`; see [Versions](#versions) |
 | Custom configuration | ✅ | `my.cnf` via the engine component's `configuration` parameter |
 | Monitoring | ✅ | opt-in via the `monitoring` component; deploys `mysqld-exporter` and a Prometheus `ServiceMonitor` — requires the `ServiceMonitor` CRD (`monitoring.coreos.com`) |
 | TLS | ❌ | disabled by the provider; connections use username/password |
