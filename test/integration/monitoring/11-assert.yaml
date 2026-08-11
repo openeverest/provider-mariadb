@@ -1,0 +1,8 @@
+# Assert the Instance reaches Ready once the mariadb-operator finishes
+# provisioning the cluster and the exporter sidecar.
+apiVersion: core.openeverest.io/v1alpha1
+kind: Instance
+metadata:
+  name: test-instance-monitoring
+status:
+  phase: Ready
