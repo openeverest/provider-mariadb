@@ -189,7 +189,7 @@ deploy-provider-ci: helm-deps ## Deploy the provider via Helm for CI (IMG must a
 		--set image.repository=$(_IMG_REPO) \
 		--set image.tag=$(_IMG_TAG) \
 		--set image.pullPolicy=Never \
-		--wait --timeout 2m
+		--wait --timeout 5m
 	# TODO: if your chart bundles the DB operator as a subchart, scale it to 0
 	# (e.g. --set operator.replicaCount=0) — integration tests simulate the
 	# operator by patching CR statuses directly.
