@@ -1,0 +1,28 @@
+# Assert the Instance reaches Ready once the mariadb-operator finishes
+# provisioning the cluster and the exporter sidecar.
+apiVersion: core.openeverest.io/v1alpha1
+kind: Instance
+metadata:
+  name: test-instance-monitoring
+status:
+  phase: Ready
+---
+# The mariadb-operator creates a ServiceMonitor named <mariadb>-metrics once
+# the exporter Deployment is ready. Assert that it exists with the expected
+# release label, selector labels, and endpoint configuration.
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: test-instance-monitoring-metrics
+  labels:
+    release: test
+spec:
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: exporter
+      app.kubernetes.io/instance: test-instance-monitoring-metrics
+  endpoints:
+    - path: /probe
+      port: metrics
+      interval: 30s
+      scrapeTimeout: 10s

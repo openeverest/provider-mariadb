@@ -1,0 +1,95 @@
+---
+# Monitoring suite.
+#
+# Provisions a single-node MariaDB with the monitoring component enabled,
+# verifies that the provider wires spec.metrics onto the MariaDB CR (exporter
+# image, ServiceMonitor settings), waits for the instance to become Ready, and
+# tears it down.
+apiVersion: chainsaw.kyverno.io/v1alpha1
+kind: Test
+metadata:
+  name: monitoring
+spec:
+  description: |
+    Create an Instance with monitoring enabled, verify the MariaDB CR carries
+    the expected spec.metrics block, wait for Ready, then delete it.
+
+  # Collect diagnostics when a step fails.
+  catch:
+    - script:
+        content: kubectl -n $NAMESPACE get instance,mariadb,pods -o wide
+    - script:
+        content: kubectl -n $NAMESPACE get mariadb -o yaml
+    - script:
+        content: |
+          ns=$(kubectl get deploy -A -l app.kubernetes.io/name=provider-mariadb \
+            -o jsonpath='{.items[0].metadata.namespace}')
+          [ -n "$ns" ] && kubectl -n "$ns" logs -l app.kubernetes.io/name=provider-mariadb \
+            --all-containers --tail 100 || echo "provider deployment not found"
+
+  steps:
+    - name: provider-deployed
+      try:
+        - script:
+            content: |
+              set -eu
+              # Provider is installed in provider-system (CI) or default (plugin-hub);
+              # assert an available replica regardless of namespace.
+              avail=$(kubectl get deploy -A -l app.kubernetes.io/name=provider-mariadb \
+                -o jsonpath='{.items[*].status.availableReplicas}')
+              echo "provider available replicas: ${avail:-0}"
+              echo "${avail}" | grep -q '[1-9]'
+
+    # The mariadb-operator requires the ServiceMonitor CRD when metrics are
+    # enabled. Install the Prometheus Operator CRDs if not already present.
+    - name: install-servicemonitor-crd
+      try:
+        - script:
+            content: |
+              set -eu
+              if kubectl get crd servicemonitors.monitoring.coreos.com >/dev/null 2>&1; then
+                echo "ServiceMonitor CRD already present"
+              else
+                echo "Installing Prometheus Operator CRDs..."
+                kubectl apply --server-side -f \
+                  https://raw.githubusercontent.com/prometheus-operator/prometheus-operator/v0.75.2/jsonnet/prometheus-operator/servicemonitors-crd.json
+                echo "ServiceMonitor CRD installed"
+              fi
+
+    - name: create-instance-with-monitoring
+      try:
+        - apply:
+            file: 10-create-instance.yaml
+        - assert:
+            file: 10-assert.yaml
+
+    # Provisioning a real MariaDB + exporter sidecar takes a while,
+    # so give the readiness assertion a generous timeout.
+    - name: instance-running
+      timeouts:
+        assert: 8m
+      try:
+        - assert:
+            file: 11-assert.yaml
+
+    - name: delete-instance
+      try:
+        - delete:
+            ref:
+              apiVersion: core.openeverest.io/v1alpha1
+              kind: Instance
+              name: test-instance-monitoring
+        - wait:
+            apiVersion: core.openeverest.io/v1alpha1
+            kind: Instance
+            name: test-instance-monitoring
+            timeout: 2m
+            for:
+              deletion: {}
+        - wait:
+            apiVersion: k8s.mariadb.com/v1alpha1
+            kind: MariaDB
+            name: test-instance-monitoring
+            timeout: 3m
+            for:
+              deletion: {}

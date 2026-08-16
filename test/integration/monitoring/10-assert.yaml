@@ -1,0 +1,28 @@
+# Assert the Instance is accepted and the provider creates a MariaDB CR with
+# the monitoring component translated into spec.metrics.
+#
+# Chainsaw assertions are partial — only the fields listed here are checked.
+# The exporter image comes from versions.yaml (mysqld-exporter default: v0.15.1).
+# ServiceMonitor fields are passed through from the monitoring parameters.
+apiVersion: core.openeverest.io/v1alpha1
+kind: Instance
+metadata:
+  name: test-instance-monitoring
+spec:
+  providerRef:
+    name: mariadb
+---
+apiVersion: k8s.mariadb.com/v1alpha1
+kind: MariaDB
+metadata:
+  name: test-instance-monitoring
+spec:
+  replicas: 1
+  metrics:
+    enabled: true
+    exporter:
+      image: prom/mysqld-exporter:v0.15.1
+    serviceMonitor:
+      prometheusRelease: test
+      interval: 30s
+      scrapeTimeout: 10s
