@@ -91,8 +91,11 @@ func SyncMariaDB(c *controller.Context) error {
 		}
 	}
 
-	// Replicas
-	replicas := int32(1)
+	// Topology: standalone (default) or Galera HA.
+	galera := isGaleraTopology(c)
+
+	// Replicas default depends on the topology (1 for standalone, 3 for Galera).
+	replicas := defaultReplicasForTopology(galera)
 	if engine.Replicas != nil {
 		replicas = *engine.Replicas
 	}
@@ -125,10 +128,10 @@ func SyncMariaDB(c *controller.Context) error {
 		myCnf = &params.Configuration
 	}
 
-	// Exposure: map the requested Service onto the general Service (<name>). The
-	// primary Service (<name>-primary) only exists for replication/Galera; for a
-	// standalone instance the general Service is the endpoint clients connect to.
-	generalService := configureService(engine.Service)
+	// Exposure: map the requested Service onto the topology's client-facing
+	// Service. Standalone routes clients to the general Service (<name>); Galera
+	// routes writes to the primary Service (<name>-primary).
+	serviceTemplate := configureService(engine.Service)
 
 	// Metrics: map the optional monitoring component onto spec.metrics. Nil when
 	// monitoring is not enabled, so the operator deploys no exporter.
@@ -139,8 +142,12 @@ func SyncMariaDB(c *controller.Context) error {
 
 	// Affinity: map the engine component's Kubernetes affinity onto the
 	// operator's trimmed AffinityConfig. Nil when unset, so the operator keeps
-	// its own scheduling defaults.
+	// its own scheduling defaults. For Galera we default to a soft pod
+	// anti-affinity so nodes are spread without blocking scheduling.
 	affinity := convertAffinity(engine.Affinity)
+	if affinity == nil && galera {
+		affinity = defaultGaleraAffinity(c.Name())
+	}
 
 	// Read-modify-write: c.Apply performs a full Update, so we must start from
 	// the operator's current object and overlay only the fields we manage.
@@ -155,8 +162,11 @@ func SyncMariaDB(c *controller.Context) error {
 
 	var mariadbCR *mariadbv1alpha1.MariaDB
 	if apierrors.IsNotFound(err) {
-		mariadbCR = buildInitialMariaDB(c, image, replicas, storageSize, storageClassName, resourceReqs, myCnf, generalService)
+		mariadbCR = buildInitialMariaDB(c, image, replicas, storageSize, storageClassName, resourceReqs, myCnf)
 		mariadbCR.Spec.Metrics = metrics
+		if galera {
+			mariadbCR.Spec.Galera = &mariadbv1alpha1.Galera{Enabled: true}
+		}
 	} else {
 		// Overlay only the managed, mutable fields; preserve operator defaults.
 		mariadbCR = existing
@@ -164,16 +174,24 @@ func SyncMariaDB(c *controller.Context) error {
 		mariadbCR.Spec.Replicas = replicas
 		mariadbCR.Spec.Storage.Size = &storageSize
 		mariadbCR.Spec.MyCnf = myCnf
-		mariadbCR.Spec.Service = generalService
 		applyMetricsOverlay(mariadbCR, metrics)
+		applyGaleraOverlay(mariadbCR, galera)
 		if resourceReqs != nil {
 			mariadbCR.Spec.Resources = resourceReqs
 		}
 	}
 
+	// Exposure: route the user's Service request to the topology's client-facing
+	// Service. Galera uses the primary Service; standalone uses the general one.
+	if galera {
+		mariadbCR.Spec.PrimaryService = serviceTemplate
+	} else {
+		mariadbCR.Spec.Service = serviceTemplate
+	}
+
 	// Overlay affinity for both the create and update paths. AntiAffinityEnabled
-	// is left unset (the user supplies explicit rules), so the operator's
-	// affinity defaulting is a no-op and does not fight this value.
+	// is left unset, so the operator's affinity defaulting is a no-op and does
+	// not fight this value.
 	mariadbCR.Spec.Affinity = affinity
 
 	if err := c.Apply(mariadbCR); err != nil {
@@ -193,7 +211,6 @@ func buildInitialMariaDB(
 	storageClassName string,
 	resourceReqs *mariadbv1alpha1.ResourceRequirements,
 	myCnf *string,
-	generalService *mariadbv1alpha1.ServiceTemplate,
 ) *mariadbv1alpha1.MariaDB {
 	storage := mariadbv1alpha1.Storage{
 		Size:      &storageSize,
@@ -234,7 +251,6 @@ func buildInitialMariaDB(
 			Username:                 &initialUser,
 			Database:                 &initialDB,
 			PasswordSecretKeyRef:     passwordRef,
-			Service:                  generalService,
 			// The operator enables mutual TLS by default, which would require
 			// clients to present a certificate. The connection details we emit
 			// only carry username/password, so disable TLS to keep them usable.
@@ -330,14 +346,19 @@ func buildConnectionDetails(c *controller.Context) (controller.ConnectionDetails
 	}, nil
 }
 
-// resolveHost returns the externally reachable host for the general Service
-// (<name>): a LoadBalancer ingress address when available, otherwise the
-// internal cluster FQDN.
+// resolveHost returns the externally reachable host for the topology's
+// client-facing Service: the primary Service (<name>-primary) for Galera, the
+// general Service (<name>) for standalone. It prefers a LoadBalancer ingress
+// address when available, otherwise the internal cluster FQDN.
 func resolveHost(c *controller.Context) string {
-	internal := fmt.Sprintf("%s.%s.svc", c.Name(), c.Namespace())
+	serviceName := c.Name()
+	if isGaleraTopology(c) {
+		serviceName = c.Name() + primaryServiceSuffix
+	}
+	internal := fmt.Sprintf("%s.%s.svc", serviceName, c.Namespace())
 
 	svc := &corev1.Service{}
-	if err := c.Get(svc, c.Name()); err != nil {
+	if err := c.Get(svc, serviceName); err != nil {
 		return internal
 	}
 	if svc.Spec.Type != corev1.ServiceTypeLoadBalancer {

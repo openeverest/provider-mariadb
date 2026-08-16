@@ -17,13 +17,16 @@ package provider
 import (
 	"fmt"
 
+	mariadbv1alpha1 "github.com/mariadb-operator/mariadb-operator/v26/api/v1alpha1"
 	corev1 "k8s.io/api/core/v1"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/api/resource"
 	"sigs.k8s.io/controller-runtime/pkg/log"
 
 	corev1alpha1 "github.com/openeverest/openeverest/v2/api/core/v1alpha1"
 	"github.com/openeverest/openeverest/v2/provider-runtime/controller"
 
+	"github.com/openeverest/provider-mariadb/definition"
 	"github.com/openeverest/provider-mariadb/internal/common"
 )
 
@@ -40,6 +43,11 @@ func ValidateMariaDB(c *controller.Context) error {
 	if err := validateMonitoring(c); err != nil {
 		l.Error(err, "Monitoring validation failed", "name", c.Name())
 		return fmt.Errorf("monitoring validation: %w", err)
+	}
+
+	if err := validateTopology(c); err != nil {
+		l.Error(err, "Topology validation failed", "name", c.Name())
+		return fmt.Errorf("topology validation: %w", err)
 	}
 
 	return nil
@@ -111,6 +119,66 @@ func validateService(svc *corev1alpha1.Service) error {
 			common.ComponentEngine,
 		)
 	}
+}
+
+// validateTopology checks the selected topology, its Galera-specific replica
+// rules, and that the topology is not being changed on an existing instance.
+func validateTopology(c *controller.Context) error {
+	topology := c.Instance().GetTopologyType()
+	switch topology {
+	case "", string(definition.TopologyTypeStandalone), string(definition.TopologyTypeGalera):
+	default:
+		return fmt.Errorf(
+			"unsupported spec.topology.type %q; supported values are %q and %q",
+			topology, definition.TopologyTypeStandalone, definition.TopologyTypeGalera,
+		)
+	}
+
+	galera := topology == string(definition.TopologyTypeGalera)
+	if galera {
+		if err := validateGaleraReplicas(c); err != nil {
+			return err
+		}
+	}
+	return validateTopologyImmutable(c, galera)
+}
+
+// validateGaleraReplicas enforces Galera's quorum requirement: an odd number of
+// engine nodes, at least 3.
+func validateGaleraReplicas(c *controller.Context) error {
+	engine := c.Instance().Spec.Components[common.ComponentEngine]
+	replicas := galeraDefaultReplicas
+	if engine.Replicas != nil {
+		replicas = *engine.Replicas
+	}
+	if replicas < 3 {
+		return fmt.Errorf("galera topology requires at least 3 engine replicas, got %d", replicas)
+	}
+	if replicas%2 == 0 {
+		return fmt.Errorf(
+			"galera topology requires an odd number of engine replicas to avoid split-brain, got %d",
+			replicas,
+		)
+	}
+	return nil
+}
+
+// validateTopologyImmutable rejects switching an existing instance between the
+// standalone and Galera topologies. The provider has no access to the previous
+// Instance spec at admission time, so it compares against the Galera state of
+// the already-provisioned MariaDB CR.
+func validateTopologyImmutable(c *controller.Context, galera bool) error {
+	existing := &mariadbv1alpha1.MariaDB{}
+	if err := c.Get(existing, c.Name()); err != nil {
+		if apierrors.IsNotFound(err) {
+			return nil
+		}
+		return fmt.Errorf("get MariaDB: %w", err)
+	}
+	if existing.IsGaleraEnabled() != galera {
+		return fmt.Errorf("spec.topology is immutable and cannot be changed on an existing instance")
+	}
+	return nil
 }
 
 // mustParseQuantity is a helper that panics on invalid quantity strings (compile-time constants only).

@@ -112,3 +112,12 @@ jobs:
       make_target: test-integration-monitoring
       suite: monitoring
     secrets: inherit
+
+  test-integration-galera:
+    name: Integration / galera
+    needs: [lint, build, verify]
+    uses: ./.github/workflows/integration-test.yaml
+    with:
+      make_target: test-integration-galera
+      suite: galera
+    secrets: inherit

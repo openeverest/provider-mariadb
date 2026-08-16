@@ -70,7 +70,8 @@ Small, self-contained, and a prerequisite for meaningful HA. Ship first. **✅ D
       the operator's affinity defaulting stays a no-op and doesn't churn the value.
 - [x] Unit tests for the affinity mapping and validation (`affinity_test.go`).
 - [x] Example manifest (`examples/instance-anti-affinity.yaml`) + README capability row.
-- [ ] (Deferred to P2) Default anti-affinity on for the HA/Galera topology.
+- [x] Default anti-affinity on for the HA/Galera topology — done in P2
+      (`defaultGaleraAffinity`, soft/preferred).
 
 **Note on template churn** — affinity lives in the pod template; changing it after
 creation triggers a rolling update. It is only written when the user sets it.
@@ -82,29 +83,37 @@ creation triggers a rolling update. It is only written when the user sets it.
 
 The core "cluster deployment for HA" ask. The operator supports Galera natively
 (`spec.galera`, `api/v1alpha1/mariadb_galera_types.go`) with SST, recovery,
-primary/secondary services and a PodDisruptionBudget.
+primary/secondary services and a PodDisruptionBudget. **✅ Done.**
 
 **Tasks**
 
-- [ ] Add a `galera` topology under `definition/topologies/galera/`
-      (`topology.yaml` + `types.go`), mirroring `standalone/`. Default replicas: 3.
-- [ ] Add `TopologyTypeGalera` handling in `SyncMariaDB`: set `spec.galera.enabled=true`
-      (the operator's `Galera.SetDefaults` fills SST=mariabackup, recovery, agent/init images).
-- [ ] Enforce the operator's odd-replica rule: `replicas % 2 == 1` (or set
-      `replicasAllowEvenNumber`). Validate in `validate.go` **and** the topology UI schema.
-- [ ] Enable anti-affinity by default (P1) so nodes are spread.
-- [ ] Add a `PodDisruptionBudget` (`spec.podDisruptionBudget`) for the HA topology.
-- [ ] Connection host: for HA the client endpoint is the **primary** Service
-      (`<name>-primary`); update `resolveHost` / `buildConnectionDetails` to select it
-      per topology (standalone still uses the general `<name>` Service).
-- [ ] Map exposure (`engine.Service`) onto `spec.primaryService` (and optionally
-      `spec.secondaryService`) for HA instead of the general Service.
-- [ ] Guard topology transitions (standalone ↔ galera) — likely immutable; validate.
-- [ ] Integration test (chainsaw) under `test/integration/` bringing up a 3-node Galera cluster.
-- [ ] Update README capabilities + topologies table.
+- [x] Add a `galera` topology under `definition/topologies/galera/`
+      (`topology.yaml` + `types.go`), default replicas 3.
+- [x] Add Galera handling in `SyncMariaDB` (`internal/provider/galera.go`):
+      `applyGaleraOverlay` sets `spec.galera.enabled=true` and preserves the
+      operator-defaulted Galera sub-fields across reconciles.
+- [x] Enforce the operator's odd-replica rule (`>= 3`, odd) in `validate.go`
+      (`validateGaleraReplicas`) **and** the topology UI schema (CEL).
+- [x] Default a **soft** (preferred) pod anti-affinity for Galera
+      (`defaultGaleraAffinity`) so nodes are spread without blocking scheduling —
+      closes the deferred P1 item.
+- [x] PodDisruptionBudget: **no action needed** — the operator auto-creates an HA
+      PDB when Galera is enabled (`reconcilePodDisruptionBudget`).
+- [x] Connection host: for Galera, `resolveHost` selects the primary Service
+      (`<name>-primary`); standalone still uses the general Service.
+- [x] Map exposure (`engine.Service`) onto `spec.primaryService` for Galera,
+      `spec.service` for standalone.
+- [x] Topology immutability: `validateTopologyImmutable` rejects standalone ↔
+      galera changes by comparing against the existing MariaDB CR's Galera state.
+- [x] Unit tests (`galera_test.go`) + example (`examples/instance-galera.yaml`)
+      + README topology/capability rows.
+- [x] Integration test (chainsaw) bringing up a 3-node Galera cluster
+      (`test/integration/galera/`), wired as a **separate** CI job
+      (`test-integration-galera` in `ci.yaml`) so it fails independently.
 
 **Deferred:** async `replication` topology (operator marks it alpha — `TopologyTypeReplication`
 already stubbed in `definition/types.go`). Needed later as a prerequisite for operator PITR (§7).
+
 
 ---
 
