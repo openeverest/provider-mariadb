@@ -137,6 +137,11 @@ func SyncMariaDB(c *controller.Context) error {
 		return fmt.Errorf("build metrics: %w", err)
 	}
 
+	// Affinity: map the engine component's Kubernetes affinity onto the
+	// operator's trimmed AffinityConfig. Nil when unset, so the operator keeps
+	// its own scheduling defaults.
+	affinity := convertAffinity(engine.Affinity)
+
 	// Read-modify-write: c.Apply performs a full Update, so we must start from
 	// the operator's current object and overlay only the fields we manage.
 	// Building a bare spec here would wipe every operator-defaulted field
@@ -165,6 +170,11 @@ func SyncMariaDB(c *controller.Context) error {
 			mariadbCR.Spec.Resources = resourceReqs
 		}
 	}
+
+	// Overlay affinity for both the create and update paths. AntiAffinityEnabled
+	// is left unset (the user supplies explicit rules), so the operator's
+	// affinity defaulting is a no-op and does not fight this value.
+	mariadbCR.Spec.Affinity = affinity
 
 	if err := c.Apply(mariadbCR); err != nil {
 		return fmt.Errorf("apply MariaDB: %w", err)

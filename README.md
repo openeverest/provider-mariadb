@@ -63,6 +63,7 @@ provider itself is covered under [Installation](#installation).
 | Version upgrades | ✅ | of the deployed MariaDB version — change `spec.version`; see [Versions](#versions) |
 | Custom configuration | ✅ | `my.cnf` via the engine component's `configuration` parameter |
 | Monitoring | ✅ | opt-in via the `monitoring` component; deploys `mysqld-exporter` and a Prometheus `ServiceMonitor` — requires the `ServiceMonitor` CRD (`monitoring.coreos.com`) |
+| Pod scheduling (affinity) | ✅ | `spec.components.engine.affinity` — `nodeAffinity` and `podAntiAffinity` are mapped to the operator; `podAffinity` is rejected |
 | TLS | ❌ | disabled by the provider; connections use username/password |
 
 Stateful workloads additionally report:

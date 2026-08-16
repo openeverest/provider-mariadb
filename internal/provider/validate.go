@@ -87,6 +87,10 @@ func validateComponents(c *controller.Context) error {
 		return err
 	}
 
+	if err := validateAffinity(engine.Affinity); err != nil {
+		return err
+	}
+
 	return nil
 }
 
