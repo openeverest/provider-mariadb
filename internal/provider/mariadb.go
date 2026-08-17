@@ -141,12 +141,12 @@ func SyncMariaDB(c *controller.Context) error {
 	}
 
 	// Affinity: map the engine component's Kubernetes affinity onto the
-	// operator's trimmed AffinityConfig. Nil when unset, so the operator keeps
-	// its own scheduling defaults. For Galera we default to a soft pod
-	// anti-affinity so nodes are spread without blocking scheduling.
-	affinity := convertAffinity(engine.Affinity)
-	if affinity == nil && galera {
-		affinity = defaultGaleraAffinity(c.Name())
+	// operator's trimmed AffinityConfig. Combines the raw affinity escape hatch,
+	// node-targeting rules, and — for Galera — a soft pod anti-affinity that
+	// spreads nodes without blocking scheduling.
+	affinity, err := buildAffinity(engine.Affinity, params.NodeAffinity, galera, c.Name())
+	if err != nil {
+		return fmt.Errorf("build affinity: %w", err)
 	}
 
 	// Read-modify-write: c.Apply performs a full Update, so we must start from

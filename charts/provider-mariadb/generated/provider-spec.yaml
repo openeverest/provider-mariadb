@@ -57,6 +57,18 @@ spec:
                     value: NodePort
               path: spec.components.engine.service.serviceType
               uiType: select
+            nodeAffinity:
+              fieldParams:
+                helperText: 'Restrict pods to nodes matching these label rules. One rule per line: ''<key> <operator> [values]'' (operator: In, NotIn, Exists, DoesNotExist).'
+                label: Node targeting
+                maxRows: 6
+                minRows: 2
+                multiline: true
+                placeholder: |
+                  disktype In ssd,nvme
+                  gpu Exists
+              path: spec.components.engine.parameters.nodeAffinity
+              uiType: text
             storageClass:
               dataSource:
                 provider: storageClasses
@@ -71,6 +83,7 @@ spec:
             - storageClass
             - externalAccess
             - configuration
+            - nodeAffinity
           description: Configure storage class and optional MariaDB settings.
           label: Advanced configuration
         databaseVersion:
@@ -209,6 +222,18 @@ spec:
                     value: NodePort
               path: spec.components.engine.service.serviceType
               uiType: select
+            nodeAffinity:
+              fieldParams:
+                helperText: 'Restrict pods to nodes matching these label rules. One rule per line: ''<key> <operator> [values]'' (operator: In, NotIn, Exists, DoesNotExist).'
+                label: Node targeting
+                maxRows: 6
+                minRows: 2
+                multiline: true
+                placeholder: |
+                  disktype In ssd,nvme
+                  gpu Exists
+              path: spec.components.engine.parameters.nodeAffinity
+              uiType: text
             storageClass:
               dataSource:
                 provider: storageClasses
@@ -223,6 +248,7 @@ spec:
             - storageClass
             - externalAccess
             - configuration
+            - nodeAffinity
           description: Configure storage class and optional MariaDB settings.
           label: Advanced configuration
         databaseVersion:
@@ -269,11 +295,16 @@ spec:
                 numberOfNodes:
                   fieldParams:
                     defaultValue: 1
+                    helperText: Standalone runs a single node. Use the Galera topology for a multi-node HA cluster.
                     label: Number of nodes
                   path: spec.components.engine.replicas
                   uiType: number
                   validation:
+                    celExpressions:
+                      - celExpr: spec.components.engine.replicas == 1
+                        message: Standalone topology supports a single node only; use the Galera topology for multiple nodes
                     int: true
+                    max: 1
                     min: 1
                     required: true
                 resources:

@@ -1,0 +1,25 @@
+# Example Instance using the node-targeting parameter to restrict engine pods to
+# nodes with specific labels.
+#
+# `spec.components.engine.parameters.nodeAffinity` is a newline-separated list of
+# rules ("<key> <operator> [<value>,<value>...]"; operator: In, NotIn, Exists,
+# DoesNotExist). The provider compiles all rules into a single required node
+# affinity term (AND). This is the form-friendly alternative to setting the full
+# `spec.components.engine.affinity.nodeAffinity` — the two are mutually exclusive.
+apiVersion: core.openeverest.io/v1alpha1
+kind: Instance
+metadata:
+  name: mariadb-node-affinity
+spec:
+  providerRef:
+    name: mariadb
+  components:
+    engine:
+      type: mariadb
+      replicas: 1
+      storage:
+        size: 10Gi
+      parameters:
+        nodeAffinity: |
+          disktype In ssd,nvme
+          gpu Exists
