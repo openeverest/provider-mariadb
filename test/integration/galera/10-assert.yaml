@@ -1,0 +1,31 @@
+# Expected outcome of the create-instance step.
+#
+# Assert both the accepted Instance and the MariaDB CR the provider creates from
+# it. Chainsaw asserts are partial: only the fields listed here are checked. The
+# key thing verified here is that the galera topology maps onto spec.galera.
+apiVersion: core.openeverest.io/v1alpha1
+kind: Instance
+metadata:
+  name: test-galera
+spec:
+  topology:
+    type: galera
+---
+apiVersion: k8s.mariadb.com/v1alpha1
+kind: MariaDB
+metadata:
+  name: test-galera
+spec:
+  replicas: 3
+  galera:
+    enabled: true
+  username: everest
+  database: everest
+  rootPasswordSecretKeyRef:
+    name: everest-secrets-test-galera-root
+    key: root-password
+    generate: true
+  passwordSecretKeyRef:
+    name: everest-secrets-test-galera
+    key: password
+    generate: true
