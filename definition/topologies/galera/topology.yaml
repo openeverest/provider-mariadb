@@ -158,10 +158,23 @@ ui:
             multiline: true
             minRows: 3
             maxRows: 8
+        nodeAffinity:
+          uiType: text
+          path: spec.components.engine.parameters.nodeAffinity
+          fieldParams:
+            label: "Node targeting"
+            helperText: "Restrict pods to nodes matching these label rules. One rule per line: '<key> <operator> [values]' (operator: In, NotIn, Exists, DoesNotExist)."
+            placeholder: |
+              disktype In ssd,nvme
+              gpu Exists
+            multiline: true
+            minRows: 2
+            maxRows: 6
       componentsOrder:
         - storageClass
         - externalAccess
         - configuration
+        - nodeAffinity
 
   sectionsOrder:
     - databaseVersion

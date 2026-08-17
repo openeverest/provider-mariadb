@@ -43,10 +43,15 @@ ui:
               fieldParams:
                 label: "Number of nodes"
                 defaultValue: 1
+                helperText: "Standalone runs a single node. Use the Galera topology for a multi-node HA cluster."
               validation:
                 required: true
                 min: 1
+                max: 1
                 int: true
+                celExpressions:
+                  - celExpr: "spec.components.engine.replicas == 1"
+                    message: "Standalone topology supports a single node only; use the Galera topology for multiple nodes"
 
             resources:
               uiType: group
@@ -151,10 +156,23 @@ ui:
             multiline: true
             minRows: 3
             maxRows: 8
+        nodeAffinity:
+          uiType: text
+          path: spec.components.engine.parameters.nodeAffinity
+          fieldParams:
+            label: "Node targeting"
+            helperText: "Restrict pods to nodes matching these label rules. One rule per line: '<key> <operator> [values]' (operator: In, NotIn, Exists, DoesNotExist)."
+            placeholder: |
+              disktype In ssd,nvme
+              gpu Exists
+            multiline: true
+            minRows: 2
+            maxRows: 6
       componentsOrder:
         - storageClass
         - externalAccess
         - configuration
+        - nodeAffinity
 
   sectionsOrder:
     - databaseVersion
