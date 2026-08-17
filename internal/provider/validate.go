@@ -16,6 +16,7 @@ package provider
 
 import (
 	"fmt"
+	"strings"
 
 	mariadbv1alpha1 "github.com/mariadb-operator/mariadb-operator/v26/api/v1alpha1"
 	corev1 "k8s.io/api/core/v1"
@@ -27,6 +28,7 @@ import (
 	"github.com/openeverest/openeverest/v2/provider-runtime/controller"
 
 	"github.com/openeverest/provider-mariadb/definition"
+	"github.com/openeverest/provider-mariadb/definition/components"
 	"github.com/openeverest/provider-mariadb/internal/common"
 )
 
@@ -99,6 +101,29 @@ func validateComponents(c *controller.Context) error {
 		return err
 	}
 
+	if err := validateNodeAffinity(c, engine); err != nil {
+		return err
+	}
+
+	return nil
+}
+
+// validateNodeAffinity checks the engine's node-targeting parameter: it must parse and
+// must not be combined with a raw affinity.nodeAffinity (the two would conflict).
+func validateNodeAffinity(c *controller.Context, engine corev1alpha1.ComponentSpec) error {
+	var params components.MariadbParameters
+	if !c.TryDecodeComponentParameters(engine, &params) || strings.TrimSpace(params.NodeAffinity) == "" {
+		return nil
+	}
+	if engine.Affinity != nil && engine.Affinity.NodeAffinity != nil {
+		return fmt.Errorf(
+			"spec.components.%s: set node targeting via either affinity.nodeAffinity or the nodeAffinity parameter, not both",
+			common.ComponentEngine,
+		)
+	}
+	if _, err := parseNodeAffinityRules(params.NodeAffinity); err != nil {
+		return fmt.Errorf("spec.components.%s.parameters.nodeAffinity: %w", common.ComponentEngine, err)
+	}
 	return nil
 }
 
@@ -139,8 +164,25 @@ func validateTopology(c *controller.Context) error {
 		if err := validateGaleraReplicas(c); err != nil {
 			return err
 		}
+	} else {
+		if err := validateStandaloneReplicas(c); err != nil {
+			return err
+		}
 	}
 	return validateTopologyImmutable(c, galera)
+}
+
+// validateStandaloneReplicas enforces that the standalone topology runs a single
+// node; MariaDB has no clustering without Galera, so more than one replica is invalid.
+func validateStandaloneReplicas(c *controller.Context) error {
+	engine := c.Instance().Spec.Components[common.ComponentEngine]
+	if engine.Replicas != nil && *engine.Replicas != standaloneDefaultReplicas {
+		return fmt.Errorf(
+			"standalone topology supports a single node only, got %d; use the galera topology for multiple nodes",
+			*engine.Replicas,
+		)
+	}
+	return nil
 }
 
 // validateGaleraReplicas enforces Galera's quorum requirement: an odd number of

@@ -19,6 +19,7 @@ import (
 	"testing"
 
 	mariadbv1alpha1 "github.com/mariadb-operator/mariadb-operator/v26/api/v1alpha1"
+	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/utils/ptr"
@@ -127,6 +128,71 @@ func TestDefaultGaleraAffinity(t *testing.T) {
 	}
 }
 
+func newEngineParamsContext(t *testing.T, params string, affinity *corev1.Affinity) *controller.Context {
+	t.Helper()
+
+	scheme := runtime.NewScheme()
+	if err := corev1alpha1.AddToScheme(scheme); err != nil {
+		t.Fatalf("add core scheme: %v", err)
+	}
+	if err := mariadbv1alpha1.AddToScheme(scheme); err != nil {
+		t.Fatalf("add mariadb scheme: %v", err)
+	}
+
+	engine := corev1alpha1.ComponentSpec{
+		Name:     common.ComponentEngine,
+		Type:     common.ComponentTypeMariaDB,
+		Affinity: affinity,
+	}
+	if params != "" {
+		engine.Parameters = &runtime.RawExtension{Raw: []byte(params)}
+	}
+
+	instance := &corev1alpha1.Instance{
+		ObjectMeta: metav1.ObjectMeta{Name: "test", Namespace: "default"},
+		Spec: corev1alpha1.InstanceSpec{
+			Components: map[string]corev1alpha1.ComponentSpec{common.ComponentEngine: engine},
+		},
+	}
+	builder := fake.NewClientBuilder().WithScheme(scheme).WithObjects(instance)
+	return controller.NewContext(context.Background(), builder.Build(), instance, common.ProviderName)
+}
+
+func TestValidateNodeAffinity(t *testing.T) {
+	tests := []struct {
+		name     string
+		params   string
+		affinity *corev1.Affinity
+		wantErr  bool
+	}{
+		{name: "no params", params: "", wantErr: false},
+		{name: "valid rules", params: `{"nodeAffinity":"disktype In ssd"}`, wantErr: false},
+		{name: "invalid syntax", params: `{"nodeAffinity":"disktype Equals ssd"}`, wantErr: true},
+		{
+			name:     "conflict with raw node affinity",
+			params:   `{"nodeAffinity":"disktype In ssd"}`,
+			affinity: &corev1.Affinity{NodeAffinity: &corev1.NodeAffinity{}},
+			wantErr:  true,
+		},
+		{
+			name:     "raw pod anti-affinity does not conflict",
+			params:   `{"nodeAffinity":"disktype In ssd"}`,
+			affinity: &corev1.Affinity{PodAntiAffinity: &corev1.PodAntiAffinity{}},
+			wantErr:  false,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			c := newEngineParamsContext(t, tt.params, tt.affinity)
+			engine := c.Instance().Spec.Components[common.ComponentEngine]
+			err := validateNodeAffinity(c, engine)
+			if (err != nil) != tt.wantErr {
+				t.Fatalf("validateNodeAffinity() error = %v, wantErr %v", err, tt.wantErr)
+			}
+		})
+	}
+}
+
 func TestValidateTopology_Unsupported(t *testing.T) {
 	c := newTopologyContext(t, "sharded", nil)
 	if err := validateTopology(c); err == nil {
@@ -156,6 +222,28 @@ func TestValidateTopology_GaleraReplicas(t *testing.T) {
 	}
 }
 
+func TestValidateTopology_StandaloneReplicas(t *testing.T) {
+	tests := []struct {
+		name     string
+		replicas *int32
+		wantErr  bool
+	}{
+		{name: "default (unset) is 1", replicas: nil, wantErr: false},
+		{name: "single node ok", replicas: ptr.To(int32(1)), wantErr: false},
+		{name: "two nodes rejected", replicas: ptr.To(int32(2)), wantErr: true},
+		{name: "three nodes rejected", replicas: ptr.To(int32(3)), wantErr: true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			c := newTopologyContext(t, "standalone", tt.replicas)
+			err := validateTopology(c)
+			if (err != nil) != tt.wantErr {
+				t.Fatalf("validateTopology() error = %v, wantErr %v", err, tt.wantErr)
+			}
+		})
+	}
+}
+
 func TestValidateTopology_Immutable(t *testing.T) {
 	tests := []struct {
 		name     string
@@ -171,7 +259,11 @@ func TestValidateTopology_Immutable(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			replicas := ptr.To(int32(3))
+			galera := tt.topology == "galera"
+			replicas := ptr.To(int32(1))
+			if galera {
+				replicas = ptr.To(int32(3))
+			}
 			var c *controller.Context
 			if tt.existing != nil {
 				c = newTopologyContext(t, tt.topology, replicas, tt.existing)
