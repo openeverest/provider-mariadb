@@ -15,6 +15,7 @@
 package provider
 
 import (
+	"errors"
 	"fmt"
 	"strconv"
 
@@ -50,6 +51,8 @@ const (
 	// defaultInitialUser is the initial user created on the cluster.
 	defaultInitialUser = "everest"
 )
+
+var errTLSCABundleNotReady = errors.New("TLS CA bundle is not ready")
 
 // userSecretName returns the name of the Secret holding the initial user's password
 // for the given instance. Follows the OpenEverest convention used across providers and
@@ -149,6 +152,11 @@ func SyncMariaDB(c *controller.Context) error {
 		return fmt.Errorf("build affinity: %w", err)
 	}
 
+	tls, err := buildTLS(c)
+	if err != nil {
+		return fmt.Errorf("build TLS: %w", err)
+	}
+
 	// Read-modify-write: c.Apply performs a full Update, so we must start from
 	// the operator's current object and overlay only the fields we manage.
 	// Building a bare spec here would wipe every operator-defaulted field
@@ -193,6 +201,10 @@ func SyncMariaDB(c *controller.Context) error {
 	// is left unset, so the operator's affinity defaulting is a no-op and does
 	// not fight this value.
 	mariadbCR.Spec.Affinity = affinity
+
+	// TLS is enabled by default. Overlay only provider-owned switches so the
+	// operator's generated certificate and CA references remain intact.
+	applyTLSOverlay(mariadbCR, tls)
 
 	if err := c.Apply(mariadbCR); err != nil {
 		return fmt.Errorf("apply MariaDB: %w", err)
@@ -251,10 +263,6 @@ func buildInitialMariaDB(
 			Username:                 &initialUser,
 			Database:                 &initialDB,
 			PasswordSecretKeyRef:     passwordRef,
-			// The operator enables mutual TLS by default, which would require
-			// clients to present a certificate. The connection details we emit
-			// only carry username/password, so disable TLS to keep them usable.
-			TLS: &mariadbv1alpha1.TLS{Enabled: false},
 			ContainerTemplate: mariadbv1alpha1.ContainerTemplate{
 				Resources: resourceReqs,
 			},
@@ -303,6 +311,9 @@ func StatusMariaDB(c *controller.Context) (controller.Status, error) {
 	if mariadbCR.IsReady() {
 		details, err := buildConnectionDetails(c)
 		if err != nil {
+			if errors.Is(err, errTLSCABundleNotReady) {
+				return controller.Provisioning("Waiting for MariaDB TLS CA bundle"), nil
+			}
 			if apierrors.IsNotFound(err) {
 				return controller.Provisioning("Waiting for MariaDB credentials secret"), nil
 			}
@@ -331,6 +342,24 @@ func buildConnectionDetails(c *controller.Context) (controller.ConnectionDetails
 	port := strconv.Itoa(defaultPort)
 	username := defaultInitialUser
 	password := string(secret.Data[userPasswordSecretKey])
+	additionalProperties := map[string]string{}
+
+	tlsSettings, err := resolveTLSSettings(c)
+	if err != nil {
+		return controller.ConnectionDetails{}, fmt.Errorf("resolve TLS settings: %w", err)
+	}
+	if tlsSettings.Enabled {
+		caSecret := &corev1.Secret{}
+		if err := c.Get(caSecret, tlsCABundleSecretName(c.Name())); err != nil {
+			return controller.ConnectionDetails{}, fmt.Errorf("%w: %v", errTLSCABundleNotReady, err)
+		}
+		ca, ok := caSecret.Data[tlsCAKey]
+		if !ok || len(ca) == 0 {
+			return controller.ConnectionDetails{}, fmt.Errorf("%w: secret %q has no %q key", errTLSCABundleNotReady, caSecret.Name, tlsCAKey)
+		}
+		additionalProperties[tlsConnectionKey] = strconv.FormatBool(true)
+		additionalProperties[tlsCAKey] = string(ca)
+	}
 
 	return controller.ConnectionDetails{
 		Type:     "mysql",
@@ -343,6 +372,7 @@ func buildConnectionDetails(c *controller.Context) (controller.ConnectionDetails
 			"mysql://%s:%s@%s:%s/%s",
 			username, password, host, port, defaultInitialDatabase,
 		),
+		AdditionalProperties: additionalProperties,
 	}, nil
 }
 
@@ -405,4 +435,3 @@ func getReadyCondition(m *mariadbv1alpha1.MariaDB) (metav1.Condition, bool) {
 	}
 	return metav1.Condition{}, false
 }
-

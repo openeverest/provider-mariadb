@@ -118,6 +118,37 @@ ui:
       componentsOrder:
         - enabled
 
+    security:
+      label: "Security"
+      description: "Configure encryption for MariaDB client connections."
+      components:
+        tlsEnabled:
+          uiType: select
+          path: spec.components.engine.parameters.tls.enabled
+          fieldParams:
+            label: "Enable TLS"
+            defaultValue: "true"
+            options:
+              - label: "Enabled"
+                value: "true"
+              - label: "Disabled"
+                value: "false"
+        tlsRequired:
+          uiType: select
+          path: spec.components.engine.parameters.tls.required
+          fieldParams:
+            label: "Require encrypted connections"
+            helperText: "Reject clients that do not connect using TLS. Enable only after all clients trust the published CA."
+            defaultValue: "false"
+            options:
+              - label: "Optional"
+                value: "false"
+              - label: "Required"
+                value: "true"
+      componentsOrder:
+        - tlsEnabled
+        - tlsRequired
+
     advanced:
       label: "Advanced configuration"
       description: "Configure storage class and optional MariaDB settings."
@@ -178,4 +209,5 @@ ui:
     - databaseVersion
     - resources
     - monitoring
+    - security
     - advanced

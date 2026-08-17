@@ -1,0 +1,24 @@
+# TLS is enabled by default. This example additionally requires every client
+# connection to be encrypted. Clients must trust the ca.crt value published in
+# the Instance connection Secret.
+apiVersion: core.openeverest.io/v1alpha1
+kind: Instance
+metadata:
+  name: mariadb-tls
+spec:
+  providerRef:
+    name: mariadb
+  components:
+    engine:
+      type: mariadb
+      replicas: 1
+      parameters:
+        tls:
+          enabled: true
+          required: true
+      resources:
+        requests:
+          cpu: 500m
+          memory: 2G
+      storage:
+        size: 10Gi
