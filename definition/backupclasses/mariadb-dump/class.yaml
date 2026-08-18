@@ -1,0 +1,35 @@
+# MariaDB logical-backup BackupClass definition.
+# This file is the source of truth for the generated BackupClass manifest.
+#
+# Fields:
+#   displayName/description: human-readable metadata.
+#   supportedProviders: providers this class can be used with.
+#   executionMode: "ProviderManaged" (operator-native) or "Job".
+#   providerManaged.supportsPITR: advertise PITR capability to Restore validation.
+#   providerManaged.limits: caps the runtime enforces against Instance.spec.backup.
+#     maxStorages, maxPITREnabledStorages, maxSchedulesPerStorage — unset means unlimited.
+#   parametersSchema.openAPIV3Schema / restoreParametersSchema.openAPIV3Schema:
+#     Go type names describing backup-time and restore-time parameters respectively.
+#
+# Co-located files:
+#   types.go — Go types referenced above; OpenAPI-extracted by provider-sdk generate.
+
+displayName: "MariaDB logical backup"
+description: |
+  BackupClass for the MariaDB provider. Backups are logical dumps taken with
+  mariadb-dump and driven natively by the mariadb-operator Backup CR to an
+  S3-compatible object store; OpenEverest does not run any side-car Job for
+  this class.
+supportedProviders:
+  - mariadb
+executionMode: ProviderManaged
+
+providerManaged:
+  # Point-in-time recovery is not supported for logical backups yet.
+  supportsPITR: false
+
+parametersSchema:
+  openAPIV3Schema: MariadbDumpBackupParameters
+
+restoreParametersSchema:
+  openAPIV3Schema: MariadbDumpRestoreParameters
