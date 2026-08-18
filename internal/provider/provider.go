@@ -25,8 +25,13 @@ import (
 	"github.com/openeverest/provider-mariadb/internal/common"
 )
 
-// Compile-time check that MariaDBProvider implements the required interface.
-var _ controller.ProviderInterface = (*MariaDBProvider)(nil)
+// Compile-time checks that MariaDBProvider implements the required interfaces.
+var (
+	_ controller.ProviderInterface = (*MariaDBProvider)(nil)
+	_ controller.BackupProvider    = (*MariaDBProvider)(nil)
+	_ controller.BackupWatcher     = (*MariaDBProvider)(nil)
+	_ controller.RestoreWatcher    = (*MariaDBProvider)(nil)
+)
 
 // MariaDBProvider implements controller.ProviderInterface for MariaDB via mariadb-operator.
 type MariaDBProvider struct {
@@ -70,4 +75,21 @@ func (p *MariaDBProvider) Status(c *controller.Context) (controller.Status, erro
 // Owner references handle cascaded cleanup of child resources.
 func (p *MariaDBProvider) Cleanup(c *controller.Context) error {
 	return CleanupMariaDB(c)
+}
+
+// BackupWatches wires the runtime's Backup reconciler to watch operator Backup
+// CRs as owned resources so operator status changes route directly to the
+// parent Backup CR via owner-reference based enqueue. SyncBackup sets the
+// controller reference from Backup -> operator Backup.
+func (p *MariaDBProvider) BackupWatches() []controller.WatchConfig {
+	return []controller.WatchConfig{
+		controller.WatchOwned(&mariadbv1alpha1.Backup{}),
+	}
+}
+
+// RestoreWatches mirrors BackupWatches for operator Restore CRs.
+func (p *MariaDBProvider) RestoreWatches() []controller.WatchConfig {
+	return []controller.WatchConfig{
+		controller.WatchOwned(&mariadbv1alpha1.Restore{}),
+	}
 }

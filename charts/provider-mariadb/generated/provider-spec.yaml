@@ -16,8 +16,35 @@ spec:
           version: 0.15.1
   components:
     engine:
+      parametersSchema:
+        openAPIV3Schema:
+          properties:
+            configuration:
+              type: string
+            nodeAffinity:
+              type: string
+          type: object
       type: mariadb
     monitoring:
+      parametersSchema:
+        openAPIV3Schema:
+          properties:
+            enabled:
+              type: boolean
+            serviceMonitor:
+              properties:
+                enabled:
+                  type: boolean
+                interval:
+                  type: string
+                jobLabel:
+                  type: string
+                prometheusRelease:
+                  type: string
+                scrapeTimeout:
+                  type: string
+              type: object
+          type: object
       type: mysqld-exporter
   topologies:
     galera:
@@ -25,6 +52,9 @@ spec:
         engine: {}
         monitoring:
           optional: true
+      parametersSchema:
+        openAPIV3Schema:
+          type: object
     standalone:
       components:
         engine: {}
