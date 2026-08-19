@@ -5,6 +5,7 @@ go 1.26.3
 require (
 	github.com/mariadb-operator/mariadb-operator/v26 v26.6.0
 	github.com/openeverest/openeverest/v2 v2.0.0-dev.2
+	github.com/stretchr/testify v1.11.1
 	k8s.io/api v0.36.3
 	k8s.io/apimachinery v0.36.3
 	k8s.io/utils v0.0.0-20260507154919-ff6756f316d2
@@ -96,7 +97,7 @@ require (
 	github.com/oasdiff/yaml3 v0.0.14 // indirect
 	github.com/oklog/ulid/v2 v2.1.1 // indirect
 	github.com/opencontainers/go-digest v1.0.0 // indirect
-	github.com/openeverest/provider-sdk v0.1.0 // indirect
+	github.com/openeverest/provider-sdk v0.1.1-0.20260813122720-1a9b6c268159 // indirect
 	github.com/percona/everest-operator v0.6.0-dev1.0.20260429065444-70caa52c384a // indirect
 	github.com/percona/percona-backup-mongodb v1.8.1-0.20251104101930-05ab6d7e1004 // indirect
 	github.com/percona/percona-postgresql-operator/v2 v2.9.0 // indirect
@@ -116,7 +117,6 @@ require (
 	github.com/sirupsen/logrus v1.9.4 // indirect
 	github.com/spf13/cobra v1.10.2 // indirect
 	github.com/spf13/pflag v1.0.10 // indirect
-	github.com/stretchr/testify v1.11.1 // indirect
 	github.com/x448/float16 v0.8.4 // indirect
 	github.com/xdg-go/pbkdf2 v1.0.0 // indirect
 	github.com/xdg-go/scram v1.2.0 // indirect
