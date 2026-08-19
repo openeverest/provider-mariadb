@@ -23,6 +23,15 @@ spec:
               type: string
             nodeAffinity:
               type: string
+            tls:
+              properties:
+                enabled:
+                  type: boolean
+                galeraSSTEnabled:
+                  type: boolean
+                required:
+                  type: boolean
+              type: object
           type: object
       type: mariadb
     monitoring:
