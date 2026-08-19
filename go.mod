@@ -5,6 +5,7 @@ go 1.26.3
 require (
 	github.com/mariadb-operator/mariadb-operator/v26 v26.6.0
 	github.com/openeverest/openeverest/v2 v2.0.0-dev.2
+	github.com/robfig/cron/v3 v3.0.1
 	github.com/stretchr/testify v1.11.1
 	k8s.io/api v0.36.3
 	k8s.io/apimachinery v0.36.3
@@ -111,7 +112,6 @@ require (
 	github.com/prometheus/common v0.67.5 // indirect
 	github.com/prometheus/procfs v0.20.1 // indirect
 	github.com/rivo/uniseg v0.4.7 // indirect
-	github.com/robfig/cron/v3 v3.0.1 // indirect
 	github.com/santhosh-tekuri/jsonschema/v6 v6.0.2 // indirect
 	github.com/sethvargo/go-envconfig v1.3.0 // indirect
 	github.com/sirupsen/logrus v1.9.4 // indirect

@@ -17,8 +17,14 @@
 package provider
 
 import (
+	"context"
+
 	mariadbv1alpha1 "github.com/mariadb-operator/mariadb-operator/v26/api/v1alpha1"
+	batchv1 "k8s.io/api/batch/v1"
 	"k8s.io/apimachinery/pkg/runtime"
+	"sigs.k8s.io/controller-runtime/pkg/client"
+	"sigs.k8s.io/controller-runtime/pkg/handler"
+	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 
 	"github.com/openeverest/openeverest/v2/provider-runtime/controller"
 
@@ -31,6 +37,7 @@ var (
 	_ controller.BackupProvider    = (*MariaDBProvider)(nil)
 	_ controller.BackupWatcher     = (*MariaDBProvider)(nil)
 	_ controller.RestoreWatcher    = (*MariaDBProvider)(nil)
+	_ controller.BackupMirror      = (*MariaDBProvider)(nil)
 )
 
 // MariaDBProvider implements controller.ProviderInterface for MariaDB via mariadb-operator.
@@ -45,6 +52,8 @@ func New() *MariaDBProvider {
 			ProviderName: common.ProviderName,
 			SchemeFuncs: []func(*runtime.Scheme) error{
 				mariadbv1alpha1.AddToScheme,
+				// Registered so the Backup mirror can watch run Jobs.
+				batchv1.AddToScheme,
 			},
 			WatchConfigs: []controller.WatchConfig{
 				// Re-enqueue the Instance when its owned MariaDB CR changes
@@ -63,7 +72,10 @@ func (p *MariaDBProvider) Validate(c *controller.Context) error {
 
 // Sync ensures the MariaDB CR exists and reflects the current Instance spec.
 func (p *MariaDBProvider) Sync(c *controller.Context) error {
-	return SyncMariaDB(c)
+	if err := SyncMariaDB(c); err != nil {
+		return err
+	}
+	return SyncScheduledBackups(c)
 }
 
 // Status reads the MariaDB CR status and translates it to an Instance status.
@@ -80,11 +92,28 @@ func (p *MariaDBProvider) Cleanup(c *controller.Context) error {
 // BackupWatches wires the runtime's Backup reconciler to watch operator Backup
 // CRs as owned resources so operator status changes route directly to the
 // parent Backup CR via owner-reference based enqueue. SyncBackup sets the
-// controller reference from Backup -> operator Backup.
+// controller reference from Backup -> operator Backup. It also watches the run
+// Jobs of scheduled backups so mirrored Backup CRs pick up completion status.
 func (p *MariaDBProvider) BackupWatches() []controller.WatchConfig {
 	return []controller.WatchConfig{
 		controller.WatchOwned(&mariadbv1alpha1.Backup{}),
+		controller.WatchExternal(
+			&batchv1.Job{},
+			handler.EnqueueRequestsFromMapFunc(scheduledRunToBackupRequest),
+			controller.ResourceVersionChangedPredicate,
+		),
 	}
+}
+
+// scheduledRunToBackupRequest maps a scheduled backup run Job to the mirrored
+// Backup CR that shares its name, and ignores unrelated Jobs.
+func scheduledRunToBackupRequest(_ context.Context, obj client.Object) []reconcile.Request {
+	if obj.GetLabels()[scheduleLabel] == "" {
+		return nil
+	}
+	return []reconcile.Request{{
+		NamespacedName: client.ObjectKey{Namespace: obj.GetNamespace(), Name: obj.GetName()},
+	}}
 }
 
 // RestoreWatches mirrors BackupWatches for operator Restore CRs.
