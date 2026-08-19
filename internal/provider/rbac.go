@@ -40,3 +40,6 @@ package provider
 // Kubernetes core resources: Secrets (credentials), Services (connection details).
 // +kubebuilder:rbac:groups="",resources=secrets,verbs=get;list;watch;create;update;patch
 // +kubebuilder:rbac:groups="",resources=services,verbs=get;list;watch
+
+// Jobs — mirror scheduled backup runs (CronJob-produced Jobs) into Backup CRs.
+// +kubebuilder:rbac:groups=batch,resources=jobs,verbs=get;list;watch

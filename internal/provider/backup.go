@@ -113,6 +113,12 @@ func (p *MariaDBProvider) SyncBackup(
 	c *controller.Context,
 	backup *backupv1alpha1.Backup,
 ) (controller.BackupExecutionStatus, error) {
+	// Scheduled runs are mirrored from operator-produced Jobs; report the Job's
+	// status without creating a new operator Backup.
+	if backup.Spec.ScheduleName != "" {
+		return syncScheduledRun(c, backup)
+	}
+
 	mdb := &mariadbv1alpha1.MariaDB{}
 	if err := c.Get(mdb, c.Name()); err != nil {
 		if apierrors.IsNotFound(err) {
@@ -255,6 +261,11 @@ func (p *MariaDBProvider) SyncRestore(
 // maxRetention), so DeletionPolicy=Delete removes only the CR; the underlying
 // data is left to the storage's retention policy.
 func (p *MariaDBProvider) CleanupBackup(c *controller.Context, backup *backupv1alpha1.Backup) (bool, error) {
+	// Scheduled runs own no operator resources: the run Job is owned by the
+	// operator CronJob and its data is governed by the schedule's retention.
+	if backup.Spec.ScheduleName != "" {
+		return true, nil
+	}
 	opBackup := &mariadbv1alpha1.Backup{}
 	err := c.Get(opBackup, backup.Name)
 	if apierrors.IsNotFound(err) {
