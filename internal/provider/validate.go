@@ -52,6 +52,11 @@ func ValidateMariaDB(c *controller.Context) error {
 		return fmt.Errorf("topology validation: %w", err)
 	}
 
+	if err := validateTLS(c); err != nil {
+		l.Error(err, "TLS validation failed", "name", c.Name())
+		return fmt.Errorf("TLS validation: %w", err)
+	}
+
 	return nil
 }
 

@@ -11,7 +11,15 @@ status:
 apiVersion: v1
 kind: Secret
 metadata:
+  name: test-instance-ca-bundle
+(base64_decode(data."ca.crt") != ''): true
+---
+apiVersion: v1
+kind: Secret
+metadata:
   name: test-instance-conn
+(base64_decode(data.tls) == 'true'): true
+(base64_decode(data."ca.crt") != ''): true
 # The runtime writes connection details here; a non-empty password proves the
 # initial-user credentials were generated.
 (base64_decode(data.password) != ''): true

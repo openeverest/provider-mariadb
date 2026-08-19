@@ -19,6 +19,10 @@ spec:
   replicas: 3
   galera:
     enabled: true
+  tls:
+    enabled: true
+    required: false
+    galeraSSTEnabled: true
   username: everest
   database: everest
   rootPasswordSecretKeyRef:

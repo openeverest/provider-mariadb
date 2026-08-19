@@ -12,12 +12,20 @@ status:
 apiVersion: v1
 kind: Secret
 metadata:
+  name: test-galera-ca-bundle
+(base64_decode(data."ca.crt") != ''): true
+---
+apiVersion: v1
+kind: Secret
+metadata:
   name: test-galera-conn
 # The runtime writes connection details here; a non-empty password proves the
 # initial-user credentials were generated. The host resolves to the primary
 # Service (test-galera-primary) for the Galera topology.
 (base64_decode(data.password) != ''): true
 (contains(base64_decode(data.host), 'test-galera-primary')): true
+(base64_decode(data.tls) == 'true'): true
+(base64_decode(data."ca.crt") != ''): true
 ---
 # The primary Service the provider maps exposure and connection details to.
 apiVersion: v1

@@ -23,6 +23,15 @@ spec:
               type: string
             nodeAffinity:
               type: string
+            tls:
+              properties:
+                enabled:
+                  type: boolean
+                galeraSSTEnabled:
+                  type: boolean
+                required:
+                  type: boolean
+              type: object
           type: object
       type: mariadb
     monitoring:
@@ -219,10 +228,53 @@ spec:
               uiType: group
           description: Configure the CPU, memory, and storage for each Galera node.
           label: Resources
+        security:
+          components:
+            galeraSSTEnabled:
+              fieldParams:
+                defaultValue: "true"
+                label: Encrypt Galera state transfers
+                options:
+                  - label: Enabled
+                    value: "true"
+                  - label: Disabled
+                    value: "false"
+              path: spec.components.engine.parameters.tls.galeraSSTEnabled
+              uiType: select
+            tlsEnabled:
+              fieldParams:
+                defaultValue: "true"
+                label: Enable TLS
+                options:
+                  - label: Enabled
+                    value: "true"
+                  - label: Disabled
+                    value: "false"
+              path: spec.components.engine.parameters.tls.enabled
+              uiType: select
+            tlsRequired:
+              fieldParams:
+                defaultValue: "false"
+                helperText: Reject clients that do not connect using TLS. Enable only after all clients trust the published CA.
+                label: Require encrypted connections
+                options:
+                  - label: Optional
+                    value: "false"
+                  - label: Required
+                    value: "true"
+              path: spec.components.engine.parameters.tls.required
+              uiType: select
+          componentsOrder:
+            - tlsEnabled
+            - tlsRequired
+            - galeraSSTEnabled
+          description: Configure encryption for MariaDB client traffic and Galera state transfers.
+          label: Security
       sectionsOrder:
         - databaseVersion
         - resources
         - monitoring
+        - security
         - advanced
     standalone:
       sections:
@@ -386,10 +438,41 @@ spec:
               uiType: group
           description: Configure the CPU, memory, and storage for your MariaDB node.
           label: Resources
+        security:
+          components:
+            tlsEnabled:
+              fieldParams:
+                defaultValue: "true"
+                label: Enable TLS
+                options:
+                  - label: Enabled
+                    value: "true"
+                  - label: Disabled
+                    value: "false"
+              path: spec.components.engine.parameters.tls.enabled
+              uiType: select
+            tlsRequired:
+              fieldParams:
+                defaultValue: "false"
+                helperText: Reject clients that do not connect using TLS. Enable only after all clients trust the published CA.
+                label: Require encrypted connections
+                options:
+                  - label: Optional
+                    value: "false"
+                  - label: Required
+                    value: "true"
+              path: spec.components.engine.parameters.tls.required
+              uiType: select
+          componentsOrder:
+            - tlsEnabled
+            - tlsRequired
+          description: Configure encryption for MariaDB client connections.
+          label: Security
       sectionsOrder:
         - databaseVersion
         - resources
         - monitoring
+        - security
         - advanced
   versions:
     - components:
