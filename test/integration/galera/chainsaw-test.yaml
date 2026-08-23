@@ -81,12 +81,29 @@ spec:
               fi
               echo "connecting as '$user' to $host:$port"
 
+              # Mount the CA copied into the OpenEverest connection Secret,
+              # verify the primary Service certificate, and prove TLS was negotiated.
               kubectl -n "$NAMESPACE" run mariadb-galera-conn-check \
                 --rm -i --restart=Never \
                 --image=mariadb:11.4 \
-                --env "MYSQL_PWD=$pass" \
-                --command -- \
-                mariadb -h "$host" -P "$port" -u "$user" -e "SELECT 1;"
+                --overrides='{
+                  "spec": {
+                    "containers": [{
+                      "name": "mariadb-galera-conn-check",
+                      "image": "mariadb:11.4",
+                      "command": ["sh", "-c"],
+                      "args": ["set -eu; cipher=$(mariadb -h \"$DB_HOST\" -P \"$DB_PORT\" -u \"$DB_USER\" --ssl-ca=/tls/ca.crt --ssl-verify-server-cert -Nse \"SHOW STATUS LIKE '\''Ssl_cipher'\'';\" | awk '\''{print $2}'\''); test -n \"$cipher\"; echo \"TLS cipher: $cipher\""],
+                      "env": [
+                        {"name": "DB_HOST", "valueFrom": {"secretKeyRef": {"name": "test-galera-conn", "key": "host"}}},
+                        {"name": "DB_PORT", "valueFrom": {"secretKeyRef": {"name": "test-galera-conn", "key": "port"}}},
+                        {"name": "DB_USER", "valueFrom": {"secretKeyRef": {"name": "test-galera-conn", "key": "username"}}},
+                        {"name": "MYSQL_PWD", "valueFrom": {"secretKeyRef": {"name": "test-galera-conn", "key": "password"}}}
+                      ],
+                      "volumeMounts": [{"name": "tls", "mountPath": "/tls", "readOnly": true}]
+                    }],
+                    "volumes": [{"name": "tls", "secret": {"secretName": "test-galera-conn", "items": [{"key": "ca.crt", "path": "ca.crt"}]}}]
+                  }
+                }'
 
     - name: delete-instance
       try:

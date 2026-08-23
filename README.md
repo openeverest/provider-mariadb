@@ -65,7 +65,7 @@ provider itself is covered under [Installation](#installation).
 | Custom configuration | ✅ | `my.cnf` via the engine component's `configuration` parameter |
 | Monitoring | ✅ | opt-in via the `monitoring` component; deploys `mysqld-exporter` and a Prometheus `ServiceMonitor` — requires the `ServiceMonitor` CRD (`monitoring.coreos.com`) |
 | Pod scheduling (affinity) | ✅ | `spec.components.engine.affinity` — `nodeAffinity` and `podAntiAffinity` are mapped to the operator; `podAffinity` is rejected |
-| TLS | ❌ | disabled by the provider; connections use username/password |
+| TLS | ✅ | enabled by default with operator-managed certificates; CA is published in the connection Secret |
 
 Stateful workloads additionally report:
 
@@ -145,6 +145,24 @@ kubectl get instance my-instance -o jsonpath='{.status.connectionSecretRef.name}
 
 The credentials (host, port, username, password, uri) live in the connection
 Secret named by `.status.connectionSecretRef.name`.
+
+TLS is enabled by default. The same connection Secret contains `tls: "true"`
+and the operator-generated CA bundle under `ca.crt`, allowing clients to verify
+the MariaDB server certificate. Unencrypted connections remain accepted by
+default for migration compatibility. To reject them, set:
+
+```yaml
+spec:
+  components:
+    engine:
+      parameters:
+        tls:
+          required: true
+```
+
+TLS can be explicitly disabled with `tls.enabled: false`. Galera deployments
+also encrypt state snapshot transfers by default; this can be changed with
+`tls.galeraSSTEnabled`. See [examples/instance-tls.yaml](examples/instance-tls.yaml).
 
 ## Topologies
 

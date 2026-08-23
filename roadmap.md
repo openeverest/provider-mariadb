@@ -30,7 +30,7 @@ Source of truth: `internal/provider/`, `definition/`.
 | Connection details | ✅ | `buildConnectionDetails` (user/pass, LB-aware host) |
 | **HA topologies (Galera/replication)** | ❌ | only `standalone` topology exists |
 | **Backups / restore / PITR** | ❌ | no `BackupProvider` implementation, no BackupClass |
-| **TLS / transport encryption** | ❌ | **explicitly disabled** (`TLS{Enabled: false}` in `buildInitialMariaDB`) |
+| **TLS / transport encryption** | ✅ | enabled by default; operator-managed CA is published in connection details |
 | **Anti-affinity / scheduling** | ❌ | `engine.Affinity` not mapped to the operator |
 
 ### Requested capabilities → gap summary
@@ -42,7 +42,7 @@ Source of truth: `internal/provider/`, `definition/`.
 | Backups + restore to S3 (logical) | `BackupProvider` + BackupClass | **P4** |
 | PITR (regular, not physical) | ⚠️ operator constraint (see §7) | **P5** |
 | Observability with Prometheus | done; optional enhancements | **P6** |
-| Transport encryption (TLS) | enable + surface CA in connection details | **P3** |
+| Transport encryption (TLS) | enabled by default + CA surfaced in connection details | **P3 (done)** |
 | Expose via LoadBalancer / NodePort | done for standalone; extend to HA services | **P2 / P6** |
 | Anti-affinity | map `engine.Affinity`, default-on for HA | **P1** |
 
@@ -119,9 +119,9 @@ already stubbed in `definition/types.go`). Needed later as a prerequisite for op
 
 ## 4. Phase 3 — Transport encryption (TLS)
 
-Today the provider sets `TLS{Enabled: false}` in `buildInitialMariaDB` because the
-operator defaults to **mutual** TLS (clients must present a cert) while the emitted
-connection details only carry username/password.
+The provider enables TLS by default while leaving enforcement opt-in so existing
+username/password clients can migrate without disruption. The operator-generated
+CA is copied into the OpenEverest connection Secret for server verification.
 
 The operator's TLS support (`api/v1alpha1/mariadb_types.go` `TLS`) can issue and
 mount server/client certs via its own CA or cert-manager, and `TLS.Required`
@@ -129,18 +129,17 @@ controls enforcement.
 
 **Tasks**
 
-- [ ] Introduce a TLS knob on the engine component (e.g. `parameters.tls.enabled`,
-      default off during rollout, plus a `required`/mode selector).
-- [ ] When enabled, set `spec.tls.enabled=true` and choose a mode:
-      - **one-way TLS** (`Required` off / relaxed) so username/password clients keep working, **or**
-      - **mTLS** with a client cert surfaced through the connection Secret.
-- [ ] Decide CA source: operator-generated CA vs cert-manager (`pkg/discovery` gates
+- [x] Introduce TLS controls on the engine component under `parameters.tls`,
+      defaulting TLS on with an opt-in `required` selector.
+- [x] Map `enabled`, `required`, and Galera SST encryption to `spec.tls` while
+      keeping username/password authentication available.
+- [x] Decide CA source: operator-generated CA vs cert-manager (`pkg/discovery` gates
       cert-manager availability in the operator). Start with the operator CA.
-- [ ] Extend `ConnectionDetails` / connection Secret to carry the CA cert (and client
-      cert/key for mTLS) so consumers can verify the server.
-- [ ] Reconcile the TLS toggle in the read-modify-write overlay without churning the
+- [x] Extend `ConnectionDetails` / connection Secret to carry the CA cert so
+      consumers can verify the server.
+- [x] Reconcile the TLS toggle in the read-modify-write overlay without churning the
       pod template every reconcile.
-- [ ] Validation + docs; update README (TLS ❌ → ✅).
+- [x] Validation + docs; update README (TLS ❌ → ✅).
 
 **Risk:** flipping TLS on/off changes the pod template → rolling restart. Treat as a
 deliberate, user-initiated change.

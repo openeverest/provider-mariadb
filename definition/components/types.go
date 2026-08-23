@@ -40,6 +40,26 @@ type MariadbParameters struct {
 	// Mutually exclusive with spec.components.engine.affinity.nodeAffinity.
 	// +optional
 	NodeAffinity string `json:"nodeAffinity,omitempty"`
+	// TLS configures transport encryption for MariaDB. TLS is enabled by
+	// default when this block or its enabled field is omitted.
+	// +optional
+	TLS *TLSParameters `json:"tls,omitempty"`
+}
+
+// TLSParameters configures MariaDB transport encryption. Pointer booleans are
+// used so an omitted value can be distinguished from an explicit false value.
+type TLSParameters struct {
+	// Enabled controls certificate issuance and TLS support. Defaults to true.
+	// +optional
+	Enabled *FlexBool `json:"enabled,omitempty"`
+	// Required rejects unencrypted client connections. Defaults to false so
+	// existing username/password clients can migrate to TLS without disruption.
+	// +optional
+	Required *FlexBool `json:"required,omitempty"`
+	// GaleraSSTEnabled encrypts Galera state snapshot transfers. It defaults to
+	// true for Galera instances and is not valid for standalone instances.
+	// +optional
+	GaleraSSTEnabled *FlexBool `json:"galeraSSTEnabled,omitempty"`
 }
 
 // MonitoringParameters defines parameters for the monitoring component.
