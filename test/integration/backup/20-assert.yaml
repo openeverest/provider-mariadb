@@ -1,0 +1,15 @@
+# The provider translates the backup-enabled source Instance into a MariaDB CR.
+apiVersion: core.openeverest.io/v1alpha1
+kind: Instance
+metadata:
+  name: physical-source
+spec:
+  providerRef:
+    name: mariadb
+---
+apiVersion: k8s.mariadb.com/v1alpha1
+kind: MariaDB
+metadata:
+  name: physical-source
+spec:
+  replicas: 1

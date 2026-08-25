@@ -114,6 +114,7 @@
   resources:
     - backups
     - mariadbs
+    - physicalbackups
     - restores
   verbs:
     - create
@@ -128,6 +129,7 @@
   resources:
     - backups/status
     - mariadbs/status
+    - physicalbackups/status
     - restores/status
   verbs:
     - get

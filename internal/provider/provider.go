@@ -75,7 +75,10 @@ func (p *MariaDBProvider) Sync(c *controller.Context) error {
 	if err := SyncMariaDB(c); err != nil {
 		return err
 	}
-	return SyncScheduledBackups(c)
+	if err := SyncScheduledBackups(c); err != nil {
+		return err
+	}
+	return syncPhysicalDataSourceStatus(c)
 }
 
 // Status reads the MariaDB CR status and translates it to an Instance status.
@@ -97,6 +100,7 @@ func (p *MariaDBProvider) Cleanup(c *controller.Context) error {
 func (p *MariaDBProvider) BackupWatches() []controller.WatchConfig {
 	return []controller.WatchConfig{
 		controller.WatchOwned(&mariadbv1alpha1.Backup{}),
+		controller.WatchOwned(&mariadbv1alpha1.PhysicalBackup{}),
 		controller.WatchExternal(
 			&batchv1.Job{},
 			handler.EnqueueRequestsFromMapFunc(scheduledRunToBackupRequest),

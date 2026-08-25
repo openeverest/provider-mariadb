@@ -111,6 +111,8 @@ func parseScheduleParameters(schedule *corev1alpha1.InstanceBackupSchedule) (mar
 func SyncScheduledBackups(c *controller.Context) error {
 	backupCfg := c.Instance().Spec.Backup
 
+	physical := backupCfg != nil && isPhysicalClass(backupCfg.ClassRef.Name)
+
 	desired := map[string]bool{}
 	if backupCfg != nil && backupCfg.Enabled {
 		var mdb *mariadbv1alpha1.MariaDB
@@ -131,13 +133,22 @@ func SyncScheduledBackups(c *controller.Context) error {
 						return fmt.Errorf("get MariaDB: %w", err)
 					}
 				}
-				if err := reconcileScheduledBackup(c, mdb, storage.StorageRef.Name, schedule, name); err != nil {
-					return err
+				if physical {
+					if err := reconcileScheduledPhysicalBackup(c, mdb, storage.StorageRef.Name, schedule, name); err != nil {
+						return err
+					}
+				} else {
+					if err := reconcileScheduledBackup(c, mdb, storage.StorageRef.Name, schedule, name); err != nil {
+						return err
+					}
 				}
 			}
 		}
 	}
 
+	if physical {
+		return pruneScheduledPhysicalBackups(c, desired)
+	}
 	return pruneScheduledBackups(c, desired)
 }
 

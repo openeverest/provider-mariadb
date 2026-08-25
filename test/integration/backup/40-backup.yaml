@@ -1,0 +1,12 @@
+# On-demand physical backup of the source Instance to the MinIO storage.
+apiVersion: backup.openeverest.io/v1alpha1
+kind: Backup
+metadata:
+  name: physical-backup
+spec:
+  instanceRef:
+    name: physical-source
+  classRef:
+    name: mariadb-physical
+  storageRef:
+    name: minio-s3

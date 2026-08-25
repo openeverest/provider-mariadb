@@ -170,7 +170,23 @@ func SyncMariaDB(c *controller.Context) error {
 
 	var mariadbCR *mariadbv1alpha1.MariaDB
 	if apierrors.IsNotFound(err) {
+		// Physical restore is only possible into a fresh MariaDB via
+		// bootstrapFrom, so it must be set at creation time (the field is
+		// immutable afterwards). Resolve it before building the CR.
+		bootstrap, sourceInstance, err := resolvePhysicalBootstrapFrom(c)
+		if err != nil {
+			return err
+		}
+		if bootstrap != nil {
+			// The physical backup embeds the source's credentials; copy them so
+			// the operator does not generate mismatched passwords that would
+			// fail the probes and crash-loop the restored Pods.
+			if err := ensurePhysicalRestoreCredentials(c, sourceInstance); err != nil {
+				return err
+			}
+		}
 		mariadbCR = buildInitialMariaDB(c, image, replicas, storageSize, storageClassName, resourceReqs, myCnf)
+		mariadbCR.Spec.BootstrapFrom = bootstrap
 		mariadbCR.Spec.Metrics = metrics
 		if galera {
 			mariadbCR.Spec.Galera = &mariadbv1alpha1.Galera{Enabled: true}

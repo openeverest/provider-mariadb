@@ -123,6 +123,7 @@ rules:
   resources:
   - backups
   - mariadbs
+  - physicalbackups
   - restores
   verbs:
   - create
@@ -137,6 +138,7 @@ rules:
   resources:
   - backups/status
   - mariadbs/status
+  - physicalbackups/status
   - restores/status
   verbs:
   - get

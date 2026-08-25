@@ -1,0 +1,27 @@
+# S3 BackupStorage (+ credentials Secret) for the suite, pointing at the shared
+# in-cluster MinIO deployed in the `minio` namespace. Created in the ephemeral
+# test namespace so the provider resolves it alongside the Backup/Instance CRs.
+apiVersion: v1
+kind: Secret
+metadata:
+  name: minio-credentials
+type: Opaque
+data:
+  # minioadmin / minioadmin
+  AWS_ACCESS_KEY_ID: bWluaW9hZG1pbg==
+  AWS_SECRET_ACCESS_KEY: bWluaW9hZG1pbg==
+---
+apiVersion: backup.openeverest.io/v1alpha1
+kind: BackupStorage
+metadata:
+  name: minio-s3
+spec:
+  type: s3
+  s3:
+    bucket: backups
+    region: us-east-1
+    endpointURL: http://minio.minio.svc.cluster.local:9000
+    forcePathStyle: true
+    verifyTLS: false
+    credentialsSecretRef:
+      name: minio-credentials

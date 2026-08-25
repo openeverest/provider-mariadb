@@ -39,22 +39,36 @@ const (
 	// s3SecretAccessKeySecretKey is the Secret key holding the S3 secret access
 	// key in a BackupStorage credentials Secret.
 	s3SecretAccessKeySecretKey = "AWS_SECRET_ACCESS_KEY"
+
+	// classMariadbDump is the BackupClass name for logical (mariadb-dump) backups.
+	classMariadbDump = "mariadb-dump"
+	// classMariadbPhysical is the BackupClass name for physical (mariadb-backup) backups.
+	classMariadbPhysical = "mariadb-physical"
 )
 
-// buildOperatorS3Storage resolves the named BackupStorage into the operator's
-// S3 storage spec. Only S3-compatible storages are supported; anything else is
-// rejected as a configuration error.
-func buildOperatorS3Storage(c *controller.Context, storageName string) (mariadbv1alpha1.BackupStorage, error) {
+// isPhysicalClass reports whether the named BackupClass drives physical backups
+// (operator PhysicalBackup CRs) rather than logical ones (operator Backup CRs).
+func isPhysicalClass(className string) bool {
+	return className == classMariadbPhysical
+}
+
+// buildOperatorS3 resolves the named BackupStorage into the operator's S3 spec,
+// isolating objects under the given prefix (normally the owning Instance name,
+// or the source Instance name when bootstrapping a restore). Only S3-compatible
+// storages are supported; anything else is rejected as a configuration error.
+// It is shared by logical (Backup) and physical (PhysicalBackup) backups, which
+// wrap the same S3 spec in different storage types.
+func buildOperatorS3(c *controller.Context, storageName, prefix string) (*mariadbv1alpha1.S3, error) {
 	bs, err := c.BackupStorage(storageName)
 	if err != nil {
 		if apierrors.IsNotFound(err) {
-			return mariadbv1alpha1.BackupStorage{}, controller.WaitFor(
+			return nil, controller.WaitFor(
 				fmt.Sprintf("BackupStorage %q not yet present", storageName))
 		}
-		return mariadbv1alpha1.BackupStorage{}, err
+		return nil, err
 	}
 	if bs.Spec.S3 == nil {
-		return mariadbv1alpha1.BackupStorage{}, &controller.BackupConfigError{
+		return nil, &controller.BackupConfigError{
 			Reason:  "UnsupportedStorage",
 			Message: fmt.Sprintf("BackupStorage %q is not S3-compatible", storageName),
 		}
@@ -69,24 +83,31 @@ func buildOperatorS3Storage(c *controller.Context, storageName string) (mariadbv
 	endpoint = strings.TrimPrefix(endpoint, "http://")
 
 	credentialsSecret := s3.CredentialsSecretRef.Name
-	return mariadbv1alpha1.BackupStorage{
-		S3: &mariadbv1alpha1.S3{
-			Bucket:   s3.Bucket,
-			Endpoint: endpoint,
-			Region:   s3.Region,
-			// Isolate an Instance's backups within a shared bucket.
-			Prefix: c.Name(),
-			AccessKeyIdSecretKeyRef: &mariadbv1alpha1.SecretKeySelector{
-				LocalObjectReference: mariadbv1alpha1.LocalObjectReference{Name: credentialsSecret},
-				Key:                  s3AccessKeyIDSecretKey,
-			},
-			SecretAccessKeySecretKeyRef: &mariadbv1alpha1.SecretKeySelector{
-				LocalObjectReference: mariadbv1alpha1.LocalObjectReference{Name: credentialsSecret},
-				Key:                  s3SecretAccessKeySecretKey,
-			},
-			TLS: &mariadbv1alpha1.TLSConfig{Enabled: useTLS},
+	return &mariadbv1alpha1.S3{
+		Bucket:   s3.Bucket,
+		Endpoint: endpoint,
+		Region:   s3.Region,
+		Prefix:   prefix,
+		AccessKeyIdSecretKeyRef: &mariadbv1alpha1.SecretKeySelector{
+			LocalObjectReference: mariadbv1alpha1.LocalObjectReference{Name: credentialsSecret},
+			Key:                  s3AccessKeyIDSecretKey,
 		},
+		SecretAccessKeySecretKeyRef: &mariadbv1alpha1.SecretKeySelector{
+			LocalObjectReference: mariadbv1alpha1.LocalObjectReference{Name: credentialsSecret},
+			Key:                  s3SecretAccessKeySecretKey,
+		},
+		TLS: &mariadbv1alpha1.TLSConfig{Enabled: useTLS},
 	}, nil
+}
+
+// buildOperatorS3Storage wraps the resolved S3 spec in the operator's logical
+// Backup storage type, isolating the Instance's backups under its own prefix.
+func buildOperatorS3Storage(c *controller.Context, storageName string) (mariadbv1alpha1.BackupStorage, error) {
+	s3, err := buildOperatorS3(c, storageName, c.Name())
+	if err != nil {
+		return mariadbv1alpha1.BackupStorage{}, err
+	}
+	return mariadbv1alpha1.BackupStorage{S3: s3}, nil
 }
 
 // parseBackupParameters decodes the Backup CR's structured parameters into the
@@ -117,6 +138,10 @@ func (p *MariaDBProvider) SyncBackup(
 	// status without creating a new operator Backup.
 	if backup.Spec.ScheduleName != "" {
 		return syncScheduledRun(c, backup)
+	}
+
+	if isPhysicalClass(backup.Spec.ClassRef.Name) {
+		return syncPhysicalBackup(c, backup)
 	}
 
 	mdb := &mariadbv1alpha1.MariaDB{}
@@ -205,6 +230,17 @@ func (p *MariaDBProvider) SyncRestore(
 		}
 		return controller.RestoreExecutionStatus{}, fmt.Errorf("get source Backup: %w", err)
 	}
+
+	// Physical backups can only be restored by seeding a brand-new Instance via
+	// spec.dataSource (which sets MariaDB.spec.bootstrapFrom); the engine cannot
+	// restore them in place into an existing Instance.
+	if isPhysicalClass(sourceBackup.Spec.ClassRef.Name) {
+		return controller.RestoreExecutionStatus{
+			State: backupv1alpha1.RestoreStateFailed,
+			Message: "In-place restore of a physical backup is not supported; " +
+				"seed a new Instance from this Backup via spec.dataSource instead",
+		}, nil
+	}
 	if sourceBackup.Status.State == backupv1alpha1.BackupStateFailed {
 		return controller.RestoreExecutionStatus{
 			State:   backupv1alpha1.RestoreStateFailed,
@@ -265,6 +301,9 @@ func (p *MariaDBProvider) CleanupBackup(c *controller.Context, backup *backupv1a
 	// operator CronJob and its data is governed by the schedule's retention.
 	if backup.Spec.ScheduleName != "" {
 		return true, nil
+	}
+	if isPhysicalClass(backup.Spec.ClassRef.Name) {
+		return cleanupPhysicalBackup(c, backup)
 	}
 	opBackup := &mariadbv1alpha1.Backup{}
 	err := c.Get(opBackup, backup.Name)

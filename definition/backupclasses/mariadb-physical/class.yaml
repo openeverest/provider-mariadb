@@ -1,0 +1,37 @@
+# MariaDB physical-backup BackupClass definition.
+# This file is the source of truth for the generated BackupClass manifest.
+#
+# Fields:
+#   displayName/description: human-readable metadata.
+#   supportedProviders: providers this class can be used with.
+#   executionMode: "ProviderManaged" (operator-native) or "Job".
+#   providerManaged.supportsPITR: advertise PITR capability to Restore validation.
+#   providerManaged.limits: caps the runtime enforces against Instance.spec.backup.
+#     maxStorages, maxPITREnabledStorages, maxSchedulesPerStorage — unset means unlimited.
+#   parametersSchema.openAPIV3Schema / restoreParametersSchema.openAPIV3Schema:
+#     Go type names describing backup-time and restore-time parameters respectively.
+#
+# Co-located files:
+#   types.go — Go types referenced above; OpenAPI-extracted by provider-sdk generate.
+
+displayName: "MariaDB physical backup"
+description: |
+  BackupClass for the MariaDB provider. Backups are physical snapshots of the
+  data directory taken with mariadb-backup and driven natively by the
+  mariadb-operator PhysicalBackup CR to an S3-compatible object store;
+  OpenEverest does not run any side-car Job for this class. Physical backups are
+  restored by seeding a brand-new Instance from spec.dataSource; in-place
+  restore into an existing Instance is not supported by the engine.
+supportedProviders:
+  - mariadb
+executionMode: ProviderManaged
+
+providerManaged:
+  # Point-in-time recovery is not supported for physical backups yet.
+  supportsPITR: false
+
+parametersSchema:
+  openAPIV3Schema: MariadbPhysicalBackupParameters
+
+restoreParametersSchema:
+  openAPIV3Schema: MariadbPhysicalRestoreParameters

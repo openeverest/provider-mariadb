@@ -27,6 +27,10 @@ package provider
 // +kubebuilder:rbac:groups=k8s.mariadb.com,resources=restores,verbs=get;list;watch;create;update;patch;delete
 // +kubebuilder:rbac:groups=k8s.mariadb.com,resources=restores/status,verbs=get
 
+// PhysicalBackup CRs — physical backup support.
+// +kubebuilder:rbac:groups=k8s.mariadb.com,resources=physicalbackups,verbs=get;list;watch;create;update;patch;delete
+// +kubebuilder:rbac:groups=k8s.mariadb.com,resources=physicalbackups/status,verbs=get
+
 // =============================================================================
 // OPENEVEREST BACKUP RESOURCES
 // =============================================================================

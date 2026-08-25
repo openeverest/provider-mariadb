@@ -1,0 +1,184 @@
+---
+# Physical backup & restore suite.
+#
+# End-to-end proof that a physical backup taken with the mariadb-physical
+# BackupClass can seed a brand-new Instance:
+#   1. Deploy MinIO (S3) and create the backup bucket.
+#   2. Provision a source MariaDB, write a sentinel row.
+#   3. Take an on-demand physical backup to MinIO.
+#   4. Create a new Instance seeded from that backup via spec.dataSource; the
+#      provider wires MariaDB.spec.bootstrapFrom (backupContentType: Physical).
+#   5. Assert the restored cluster comes up Ready and still holds the row.
+#
+# MinIO is deployed into a fixed `minio` namespace (reused from dev/resources),
+# so the test is self-contained and needs no pre-provisioned storage.
+apiVersion: chainsaw.kyverno.io/v1alpha1
+kind: Test
+metadata:
+  name: backup
+spec:
+  description: |
+    Physical backup of a source Instance to MinIO, then restore into a new
+    Instance via spec.dataSource, verifying the data survives the round-trip.
+
+  catch:
+    - script:
+        content: kubectl -n $NAMESPACE get instance,mariadb,backup,physicalbackup,pods -o wide
+    - script:
+        content: kubectl -n $NAMESPACE get backup,physicalbackup,mariadb -o yaml
+    - script:
+        content: |
+          ns=$(kubectl get deploy -A -l app.kubernetes.io/name=provider-mariadb \
+            -o jsonpath='{.items[0].metadata.namespace}')
+          [ -n "$ns" ] && kubectl -n "$ns" logs -l app.kubernetes.io/name=provider-mariadb \
+            --all-containers --tail 200 || echo "provider deployment not found"
+
+  steps:
+    - name: provider-deployed
+      try:
+        - script:
+            content: |
+              set -eu
+              avail=$(kubectl get deploy -A -l app.kubernetes.io/name=provider-mariadb \
+                -o jsonpath='{.items[*].status.availableReplicas}')
+              echo "provider available replicas: ${avail:-0}"
+              echo "${avail}" | grep -q '[1-9]'
+
+    # Deploy the shared MinIO (idempotent) and ensure the backup bucket exists.
+    - name: setup-minio
+      timeouts:
+        exec: 4m
+      try:
+        - script:
+            content: |
+              set -eu
+              kubectl apply -f "${PROVIDER_ROOT_PATH}/dev/resources/minio.yaml"
+              kubectl -n minio rollout status deploy/minio --timeout=180s
+              # Create the bucket the BackupStorage points at (ignore if present).
+              kubectl -n minio run mc-mb --rm -i --restart=Never \
+                --image=minio/mc:latest --command -- sh -c \
+                "mc alias set local http://minio.minio.svc.cluster.local:9000 minioadmin minioadmin && (mc mb local/backups || true)"
+
+    - name: backup-storage
+      try:
+        - apply:
+            file: 10-backupstorage.yaml
+
+    - name: source-instance
+      try:
+        - apply:
+            file: 20-source-instance.yaml
+        - assert:
+            file: 20-assert.yaml
+
+    - name: source-running
+      timeouts:
+        assert: 8m
+      try:
+        - assert:
+            file: 21-assert.yaml
+
+    # Write a sentinel row that must survive the backup/restore round-trip.
+    - name: seed-data
+      timeouts:
+        exec: 3m
+      try:
+        - script:
+            content: |
+              set -eu
+              kubectl -n "$NAMESPACE" run mariadb-seed \
+                --rm -i --restart=Never \
+                --image=mariadb:11.4 \
+                --overrides='{
+                  "spec": {
+                    "containers": [{
+                      "name": "mariadb-seed",
+                      "image": "mariadb:11.4",
+                      "command": ["sh", "-c"],
+                      "args": ["set -eu; mariadb -h \"$DB_HOST\" -P \"$DB_PORT\" -u \"$DB_USER\" --ssl-ca=/tls/ca.crt -e \"CREATE TABLE IF NOT EXISTS everest.restore_probe (id INT PRIMARY KEY); INSERT INTO everest.restore_probe (id) VALUES (42) ON DUPLICATE KEY UPDATE id=id;\"; echo seeded"],
+                      "env": [
+                        {"name": "DB_HOST", "valueFrom": {"secretKeyRef": {"name": "physical-source-conn", "key": "host"}}},
+                        {"name": "DB_PORT", "valueFrom": {"secretKeyRef": {"name": "physical-source-conn", "key": "port"}}},
+                        {"name": "DB_USER", "valueFrom": {"secretKeyRef": {"name": "physical-source-conn", "key": "username"}}},
+                        {"name": "MYSQL_PWD", "valueFrom": {"secretKeyRef": {"name": "physical-source-conn", "key": "password"}}}
+                      ],
+                      "volumeMounts": [{"name": "tls", "mountPath": "/tls", "readOnly": true}]
+                    }],
+                    "volumes": [{"name": "tls", "secret": {"secretName": "physical-source-conn", "items": [{"key": "ca.crt", "path": "ca.crt"}]}}]
+                  }
+                }'
+
+    # Take the physical backup and wait for it to complete.
+    - name: take-backup
+      timeouts:
+        assert: 8m
+      try:
+        - apply:
+            file: 40-backup.yaml
+        - assert:
+            file: 40-assert.yaml
+
+    # Seed a brand-new Instance from the physical backup.
+    - name: restore-instance
+      try:
+        - apply:
+            file: 50-restore-instance.yaml
+        - assert:
+            file: 50-assert.yaml
+
+    - name: restored-running
+      timeouts:
+        assert: 8m
+      try:
+        - assert:
+            file: 51-assert.yaml
+
+    # The sentinel row must be present in the restored cluster.
+    - name: verify-data
+      timeouts:
+        exec: 3m
+      try:
+        - script:
+            content: |
+              set -eu
+              kubectl -n "$NAMESPACE" run mariadb-verify \
+                --rm -i --restart=Never \
+                --image=mariadb:11.4 \
+                --overrides='{
+                  "spec": {
+                    "containers": [{
+                      "name": "mariadb-verify",
+                      "image": "mariadb:11.4",
+                      "command": ["sh", "-c"],
+                      "args": ["set -eu; val=$(mariadb -h \"$DB_HOST\" -P \"$DB_PORT\" -u \"$DB_USER\" --ssl-ca=/tls/ca.crt -Nse \"SELECT id FROM everest.restore_probe WHERE id=42;\"); test \"$val\" = \"42\"; echo \"restore probe row present: $val\""],
+                      "env": [
+                        {"name": "DB_HOST", "valueFrom": {"secretKeyRef": {"name": "physical-restored-conn", "key": "host"}}},
+                        {"name": "DB_PORT", "valueFrom": {"secretKeyRef": {"name": "physical-restored-conn", "key": "port"}}},
+                        {"name": "DB_USER", "valueFrom": {"secretKeyRef": {"name": "physical-restored-conn", "key": "username"}}},
+                        {"name": "MYSQL_PWD", "valueFrom": {"secretKeyRef": {"name": "physical-restored-conn", "key": "password"}}}
+                      ],
+                      "volumeMounts": [{"name": "tls", "mountPath": "/tls", "readOnly": true}]
+                    }],
+                    "volumes": [{"name": "tls", "secret": {"secretName": "physical-restored-conn", "items": [{"key": "ca.crt", "path": "ca.crt"}]}}]
+                  }
+                }'
+
+    - name: delete-instances
+      try:
+        - delete:
+            ref:
+              apiVersion: core.openeverest.io/v1alpha1
+              kind: Instance
+              name: physical-restored
+        - delete:
+            ref:
+              apiVersion: core.openeverest.io/v1alpha1
+              kind: Instance
+              name: physical-source
+        - wait:
+            apiVersion: k8s.mariadb.com/v1alpha1
+            kind: MariaDB
+            name: physical-source
+            timeout: 3m
+            for:
+              deletion: {}

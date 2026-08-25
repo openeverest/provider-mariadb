@@ -121,3 +121,12 @@ jobs:
       make_target: test-integration-galera
       suite: galera
     secrets: inherit
+
+  test-integration-backup:
+    name: Integration / backup
+    needs: [lint, build, verify]
+    uses: ./.github/workflows/integration-test.yaml
+    with:
+      make_target: test-integration-backup
+      suite: backup
+    secrets: inherit

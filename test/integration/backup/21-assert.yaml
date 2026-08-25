@@ -1,0 +1,14 @@
+# The source cluster is provisioned and Ready, and its connection Secret carries
+# generated credentials.
+apiVersion: core.openeverest.io/v1alpha1
+kind: Instance
+metadata:
+  name: physical-source
+status:
+  phase: Ready
+---
+apiVersion: v1
+kind: Secret
+metadata:
+  name: physical-source-conn
+(base64_decode(data.password) != ''): true
