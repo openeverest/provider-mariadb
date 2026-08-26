@@ -54,7 +54,11 @@ func resolvePhysicalBootstrapFrom(c *controller.Context) (*mariadbv1alpha1.Boots
 		}
 		return nil, "", fmt.Errorf("get source Backup: %w", err)
 	}
-	if !isPhysicalClass(sourceBackup.Spec.ClassRef.Name) {
+	params, err := parseBackupParams(rawParameters(sourceBackup.Spec.Parameters))
+	if err != nil {
+		return nil, "", err
+	}
+	if !isPhysical(params) {
 		// Logical seeding is not driven through bootstrapFrom here.
 		return nil, "", nil
 	}

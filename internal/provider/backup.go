@@ -23,13 +23,14 @@ import (
 	"k8s.io/apimachinery/pkg/api/meta"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/runtime"
 	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
 
 	backupv1alpha1 "github.com/openeverest/openeverest/v2/api/backup/v1alpha1"
 	apicommon "github.com/openeverest/openeverest/v2/api/common/v1alpha1"
 	"github.com/openeverest/openeverest/v2/provider-runtime/controller"
 
-	mariadbdump "github.com/openeverest/provider-mariadb/definition/backupclasses/mariadb-dump"
+	mariadbbackup "github.com/openeverest/provider-mariadb/definition/backupclasses/mariadb"
 )
 
 const (
@@ -40,16 +41,40 @@ const (
 	// key in a BackupStorage credentials Secret.
 	s3SecretAccessKeySecretKey = "AWS_SECRET_ACCESS_KEY"
 
-	// classMariadbDump is the BackupClass name for logical (mariadb-dump) backups.
-	classMariadbDump = "mariadb-dump"
-	// classMariadbPhysical is the BackupClass name for physical (mariadb-backup) backups.
-	classMariadbPhysical = "mariadb-physical"
+	// backupTypeLogical selects a logical (mariadb-dump) backup.
+	backupTypeLogical = "logical"
+	// backupTypePhysical selects a physical (mariadb-backup) backup.
+	backupTypePhysical = "physical"
 )
 
-// isPhysicalClass reports whether the named BackupClass drives physical backups
-// (operator PhysicalBackup CRs) rather than logical ones (operator Backup CRs).
-func isPhysicalClass(className string) bool {
-	return className == classMariadbPhysical
+// parseBackupParams decodes structured backup parameters (from a Backup CR or a
+// schedule). An absent payload yields the zero value (which is logical).
+func parseBackupParams(raw []byte) (mariadbbackup.MariadbBackupParameters, error) {
+	var params mariadbbackup.MariadbBackupParameters
+	if len(raw) == 0 {
+		return params, nil
+	}
+	if err := json.Unmarshal(raw, &params); err != nil {
+		return params, &controller.BackupConfigError{
+			Reason:  "InvalidParameters",
+			Message: fmt.Sprintf("decode backup parameters: %v", err),
+		}
+	}
+	return params, nil
+}
+
+// isPhysical reports whether the parameters select a physical backup. An empty
+// type defaults to logical.
+func isPhysical(params mariadbbackup.MariadbBackupParameters) bool {
+	return params.Type == backupTypePhysical
+}
+
+// rawParameters returns the raw JSON of a RawExtension, or nil when absent.
+func rawParameters(p *runtime.RawExtension) []byte {
+	if p == nil {
+		return nil
+	}
+	return p.Raw
 }
 
 // buildOperatorS3 resolves the named BackupStorage into the operator's S3 spec,
@@ -110,24 +135,9 @@ func buildOperatorS3Storage(c *controller.Context, storageName string) (mariadbv
 	return mariadbv1alpha1.BackupStorage{S3: s3}, nil
 }
 
-// parseBackupParameters decodes the Backup CR's structured parameters into the
-// mariadb-dump backup parameters. An absent payload yields the zero value.
-func parseBackupParameters(backup *backupv1alpha1.Backup) (mariadbdump.MariadbDumpBackupParameters, error) {
-	var params mariadbdump.MariadbDumpBackupParameters
-	if backup.Spec.Parameters == nil || len(backup.Spec.Parameters.Raw) == 0 {
-		return params, nil
-	}
-	if err := json.Unmarshal(backup.Spec.Parameters.Raw, &params); err != nil {
-		return params, &controller.BackupConfigError{
-			Reason:  "InvalidParameters",
-			Message: fmt.Sprintf("decode backup parameters: %v", err),
-		}
-	}
-	return params, nil
-}
-
-// SyncBackup creates or updates a mariadb-operator Backup CR that dumps the
-// Instance's MariaDB to the S3 storage referenced by backup.spec.storageRef,
+// SyncBackup creates or updates the mariadb-operator CR that backs up the
+// Instance to the S3 storage referenced by backup.spec.storageRef — a Backup
+// (logical) or PhysicalBackup (physical) depending on spec.parameters.type —
 // then maps the operator's Complete condition into the BackupExecutionStatus
 // the runtime reflects onto the Backup CR.
 func (p *MariaDBProvider) SyncBackup(
@@ -140,8 +150,12 @@ func (p *MariaDBProvider) SyncBackup(
 		return syncScheduledRun(c, backup)
 	}
 
-	if isPhysicalClass(backup.Spec.ClassRef.Name) {
-		return syncPhysicalBackup(c, backup)
+	params, err := parseBackupParams(rawParameters(backup.Spec.Parameters))
+	if err != nil {
+		return controller.BackupExecutionStatus{}, err
+	}
+	if isPhysical(params) {
+		return syncPhysicalBackup(c, backup, params)
 	}
 
 	mdb := &mariadbv1alpha1.MariaDB{}
@@ -170,20 +184,12 @@ func (p *MariaDBProvider) SyncBackup(
 			if err != nil {
 				return err
 			}
-			params, err := parseBackupParameters(backup)
-			if err != nil {
-				return err
-			}
 			opBackup.Spec.MariaDBRef = mariadbv1alpha1.MariaDBRef{
 				ObjectReference: mariadbv1alpha1.ObjectReference{Name: c.Name()},
 				WaitForIt:       true,
 			}
 			opBackup.Spec.Storage = storage
-			opBackup.Spec.Databases = params.Databases
-			opBackup.Spec.IgnoreGlobalPriv = params.IgnoreGlobalPriv
-			if params.Compression != "" {
-				opBackup.Spec.Compression = mariadbv1alpha1.CompressAlgorithm(params.Compression)
-			}
+			applyLogicalBackupParameters(&opBackup.Spec, params)
 		}
 		return controllerutil.SetControllerReference(backup, opBackup, c.Client().Scheme())
 	}); err != nil {
@@ -197,6 +203,16 @@ func (p *MariaDBProvider) SyncBackup(
 		Name:  opBackup.Name,
 	}
 	return exec, nil
+}
+
+// applyLogicalBackupParameters applies the decoded parameters onto the operator
+// (logical) Backup spec.
+func applyLogicalBackupParameters(spec *mariadbv1alpha1.BackupSpec, params mariadbbackup.MariadbBackupParameters) {
+	spec.Databases = params.Databases
+	spec.IgnoreGlobalPriv = params.IgnoreGlobalPriv
+	if params.Compression != "" {
+		spec.Compression = mariadbv1alpha1.CompressAlgorithm(params.Compression)
+	}
 }
 
 // SyncRestore creates or updates a mariadb-operator Restore CR that restores
@@ -234,7 +250,11 @@ func (p *MariaDBProvider) SyncRestore(
 	// Physical backups can only be restored by seeding a brand-new Instance via
 	// spec.dataSource (which sets MariaDB.spec.bootstrapFrom); the engine cannot
 	// restore them in place into an existing Instance.
-	if isPhysicalClass(sourceBackup.Spec.ClassRef.Name) {
+	sourceParams, err := parseBackupParams(rawParameters(sourceBackup.Spec.Parameters))
+	if err != nil {
+		return controller.RestoreExecutionStatus{}, err
+	}
+	if isPhysical(sourceParams) {
 		return controller.RestoreExecutionStatus{
 			State: backupv1alpha1.RestoreStateFailed,
 			Message: "In-place restore of a physical backup is not supported; " +
@@ -302,11 +322,15 @@ func (p *MariaDBProvider) CleanupBackup(c *controller.Context, backup *backupv1a
 	if backup.Spec.ScheduleName != "" {
 		return true, nil
 	}
-	if isPhysicalClass(backup.Spec.ClassRef.Name) {
+	params, err := parseBackupParams(rawParameters(backup.Spec.Parameters))
+	if err != nil {
+		return false, err
+	}
+	if isPhysical(params) {
 		return cleanupPhysicalBackup(c, backup)
 	}
 	opBackup := &mariadbv1alpha1.Backup{}
-	err := c.Get(opBackup, backup.Name)
+	err = c.Get(opBackup, backup.Name)
 	if apierrors.IsNotFound(err) {
 		return true, nil
 	}

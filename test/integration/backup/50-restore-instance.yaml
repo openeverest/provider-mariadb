@@ -30,7 +30,7 @@ spec:
   backup:
     enabled: true
     classRef:
-      name: mariadb-physical
+      name: mariadb
     storages:
       - storageRef:
           name: minio-s3

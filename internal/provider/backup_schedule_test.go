@@ -52,7 +52,7 @@ func instanceWithSchedule(schedule corev1alpha1.InstanceBackupSchedule, storageN
 		Spec: corev1alpha1.InstanceSpec{
 			Backup: &corev1alpha1.InstanceBackupSpec{
 				Enabled:  true,
-				ClassRef: commonv1alpha1.ObjectRef{Name: "mariadb-dump"},
+				ClassRef: commonv1alpha1.ObjectRef{Name: "mariadb"},
 				Storages: []corev1alpha1.InstanceBackupStorage{
 					{
 						StorageRef: commonv1alpha1.ObjectRef{Name: storageName},
@@ -113,7 +113,8 @@ func TestSyncScheduledBackupsCreatesOperatorBackup(t *testing.T) {
 	require.NotNil(t, opBackup.Spec.InheritMetadata)
 	assert.Equal(t, "daily", opBackup.Spec.InheritMetadata.Labels[scheduleLabel])
 	assert.Equal(t, "s3", opBackup.Spec.InheritMetadata.Labels[storageLabel])
-	assert.Equal(t, "mariadb-dump", opBackup.Spec.InheritMetadata.Labels[classLabel])
+	assert.Equal(t, "mariadb", opBackup.Spec.InheritMetadata.Labels[classLabel])
+	assert.Equal(t, backupTypeLogical, opBackup.Spec.InheritMetadata.Labels[typeLabel])
 }
 
 func TestSyncScheduledBackupsDisabledScheduleSuspends(t *testing.T) {
@@ -148,7 +149,7 @@ func TestSyncScheduledBackupsPrunesRemoved(t *testing.T) {
 	instance := &corev1alpha1.Instance{
 		ObjectMeta: metav1.ObjectMeta{Name: "db", Namespace: "ns"},
 		Spec: corev1alpha1.InstanceSpec{
-			Backup: &corev1alpha1.InstanceBackupSpec{Enabled: true, ClassRef: commonv1alpha1.ObjectRef{Name: "mariadb-dump"}},
+			Backup: &corev1alpha1.InstanceBackupSpec{Enabled: true, ClassRef: commonv1alpha1.ObjectRef{Name: "mariadb"}},
 		},
 	}
 	c := newContextForInstance(t, instance, stale)
@@ -171,7 +172,8 @@ func TestMirror(t *testing.T) {
 					scheduleLabel: "daily",
 					instanceLabel: "db",
 					storageLabel:  "s3",
-					classLabel:    "mariadb-dump",
+					classLabel:    "mariadb",
+					typeLabel:     backupTypePhysical,
 				},
 			},
 		}
@@ -181,8 +183,11 @@ func TestMirror(t *testing.T) {
 		assert.Equal(t, "mdb-sched-abc-28900000", got.Name)
 		assert.Equal(t, "db", got.Spec.InstanceRef.Name)
 		assert.Equal(t, "s3", got.Spec.StorageRef.Name)
-		assert.Equal(t, "mariadb-dump", got.Spec.ClassRef.Name)
+		assert.Equal(t, "mariadb", got.Spec.ClassRef.Name)
 		assert.Equal(t, "daily", got.Spec.ScheduleName)
+		// The run's strategy is carried in parameters so restore can tell types apart.
+		require.NotNil(t, got.Spec.Parameters)
+		assert.JSONEq(t, `{"type":"physical"}`, string(got.Spec.Parameters.Raw))
 	})
 
 	t.Run("unlabeled Job is skipped", func(t *testing.T) {
@@ -220,7 +225,7 @@ func TestSyncBackupScheduledRunReadsJob(t *testing.T) {
 		ObjectMeta: metav1.ObjectMeta{Name: "mdb-sched-abc-28900000", Namespace: "ns"},
 		Spec: backupv1alpha1.BackupSpec{
 			InstanceRef:  commonv1alpha1.ObjectRef{Name: "db"},
-			ClassRef:     commonv1alpha1.ObjectRef{Name: "mariadb-dump"},
+			ClassRef:     commonv1alpha1.ObjectRef{Name: "mariadb"},
 			StorageRef:   commonv1alpha1.ObjectRef{Name: "s3"},
 			ScheduleName: "daily",
 		},

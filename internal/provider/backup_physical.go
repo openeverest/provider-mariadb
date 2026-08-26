@@ -15,7 +15,6 @@
 package provider
 
 import (
-	"encoding/json"
 	"fmt"
 	"reflect"
 
@@ -30,7 +29,7 @@ import (
 	corev1alpha1 "github.com/openeverest/openeverest/v2/api/core/v1alpha1"
 	"github.com/openeverest/openeverest/v2/provider-runtime/controller"
 
-	mariadbphysical "github.com/openeverest/provider-mariadb/definition/backupclasses/mariadb-physical"
+	mariadbbackup "github.com/openeverest/provider-mariadb/definition/backupclasses/mariadb"
 )
 
 // buildPhysicalS3Storage wraps the resolved S3 spec in the operator's
@@ -43,27 +42,11 @@ func buildPhysicalS3Storage(c *controller.Context, storageName string) (mariadbv
 	return mariadbv1alpha1.PhysicalBackupStorage{S3: s3}, nil
 }
 
-// parsePhysicalBackupParameters decodes the structured parameters into the
-// mariadb-physical backup parameters. An absent payload yields the zero value.
-func parsePhysicalBackupParameters(raw []byte) (mariadbphysical.MariadbPhysicalBackupParameters, error) {
-	var params mariadbphysical.MariadbPhysicalBackupParameters
-	if len(raw) == 0 {
-		return params, nil
-	}
-	if err := json.Unmarshal(raw, &params); err != nil {
-		return params, &controller.BackupConfigError{
-			Reason:  "InvalidParameters",
-			Message: fmt.Sprintf("decode physical backup parameters: %v", err),
-		}
-	}
-	return params, nil
-}
-
 // applyPhysicalBackupParameters applies the decoded parameters onto the operator
 // PhysicalBackup spec. Target defaults to PreferReplica (not the operator's own
 // Replica default) so single-node/standalone instances — which have no replica —
 // still take the backup from the primary instead of never scheduling it.
-func applyPhysicalBackupParameters(spec *mariadbv1alpha1.PhysicalBackupSpec, params mariadbphysical.MariadbPhysicalBackupParameters) {
+func applyPhysicalBackupParameters(spec *mariadbv1alpha1.PhysicalBackupSpec, params mariadbbackup.MariadbBackupParameters) {
 	if params.Compression != "" {
 		spec.Compression = mariadbv1alpha1.CompressAlgorithm(params.Compression)
 	}
@@ -81,6 +64,7 @@ func applyPhysicalBackupParameters(spec *mariadbv1alpha1.PhysicalBackupSpec, par
 func syncPhysicalBackup(
 	c *controller.Context,
 	backup *backupv1alpha1.Backup,
+	params mariadbbackup.MariadbBackupParameters,
 ) (controller.BackupExecutionStatus, error) {
 	mdb := &mariadbv1alpha1.MariaDB{}
 	if err := c.Get(mdb, c.Name()); err != nil {
@@ -105,14 +89,6 @@ func syncPhysicalBackup(
 		// it on creation (empty ResourceVersion means the object does not exist).
 		if opBackup.ResourceVersion == "" {
 			storage, err := buildPhysicalS3Storage(c, backup.Spec.StorageRef.Name)
-			if err != nil {
-				return err
-			}
-			var raw []byte
-			if backup.Spec.Parameters != nil {
-				raw = backup.Spec.Parameters.Raw
-			}
-			params, err := parsePhysicalBackupParameters(raw)
 			if err != nil {
 				return err
 			}
@@ -166,22 +142,21 @@ func reconcileScheduledPhysicalBackup(
 	storageName string,
 	schedule *corev1alpha1.InstanceBackupSchedule,
 	name string,
+	params mariadbbackup.MariadbBackupParameters,
 ) error {
 	storage, err := buildPhysicalS3Storage(c, storageName)
-	if err != nil {
-		return err
-	}
-	var raw []byte
-	if schedule.Parameters != nil {
-		raw = schedule.Parameters.Raw
-	}
-	params, err := parsePhysicalBackupParameters(raw)
 	if err != nil {
 		return err
 	}
 	retention, err := deriveMaxRetention(schedule.Cron, schedule.RetentionCopies)
 	if err != nil {
 		return &controller.BackupConfigError{Reason: "InvalidSchedule", Message: err.Error()}
+	}
+
+	// A logical Backup with the same name may exist if this schedule's type was
+	// switched; remove it so the physical CR can take over.
+	if err := deleteScheduledBackup(c, name); err != nil {
+		return err
 	}
 
 	// spec.storage is immutable on the operator PhysicalBackup; if it changed,
@@ -198,12 +173,7 @@ func reconcileScheduledPhysicalBackup(
 		return fmt.Errorf("get scheduled physical backup %q: %w", name, getErr)
 	}
 
-	managedLabels := map[string]string{
-		scheduleLabel: schedule.Name,
-		instanceLabel: c.Name(),
-		storageLabel:  storageName,
-		classLabel:    c.Instance().Spec.Backup.ClassRef.Name,
-	}
+	managedLabels := scheduledBackupLabels(c, schedule.Name, storageName, backupTypePhysical)
 	opBackup := &mariadbv1alpha1.PhysicalBackup{
 		ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: c.Namespace()},
 	}

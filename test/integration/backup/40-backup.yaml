@@ -7,6 +7,8 @@ spec:
   instanceRef:
     name: physical-source
   classRef:
-    name: mariadb-physical
+    name: mariadb
   storageRef:
     name: minio-s3
+  parameters:
+    type: physical

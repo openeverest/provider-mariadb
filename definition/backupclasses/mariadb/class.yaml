@@ -1,4 +1,4 @@
-# MariaDB logical-backup BackupClass definition.
+# MariaDB BackupClass definition.
 # This file is the source of truth for the generated BackupClass manifest.
 #
 # Fields:
@@ -14,22 +14,25 @@
 # Co-located files:
 #   types.go — Go types referenced above; OpenAPI-extracted by provider-sdk generate.
 
-displayName: "MariaDB logical backup"
+displayName: "MariaDB backup"
 description: |
-  BackupClass for the MariaDB provider. Backups are logical dumps taken with
-  mariadb-dump and driven natively by the mariadb-operator Backup CR to an
-  S3-compatible object store; OpenEverest does not run any side-car Job for
-  this class.
+  BackupClass for the MariaDB provider, driven natively by the mariadb-operator
+  to an S3-compatible object store; OpenEverest does not run any side-car Job for
+  this class. Each backup selects its strategy via the `type` parameter:
+  "logical" takes a mariadb-dump SQL dump (restored in place), while "physical"
+  takes a mariadb-backup data-directory snapshot (restored by seeding a new
+  Instance from spec.dataSource; in-place restore is not supported by the engine
+  for physical backups).
 supportedProviders:
   - mariadb
 executionMode: ProviderManaged
 
 providerManaged:
-  # Point-in-time recovery is not supported for logical backups yet.
+  # Point-in-time recovery is not supported yet.
   supportsPITR: false
 
 parametersSchema:
-  openAPIV3Schema: MariadbDumpBackupParameters
+  openAPIV3Schema: MariadbBackupParameters
 
 restoreParametersSchema:
-  openAPIV3Schema: MariadbDumpRestoreParameters
+  openAPIV3Schema: MariadbRestoreParameters

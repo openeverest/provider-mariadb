@@ -30,7 +30,7 @@ import (
 	corev1alpha1 "github.com/openeverest/openeverest/v2/api/core/v1alpha1"
 	"github.com/openeverest/openeverest/v2/provider-runtime/controller"
 
-	mariadbphysical "github.com/openeverest/provider-mariadb/definition/backupclasses/mariadb-physical"
+	mariadbbackup "github.com/openeverest/provider-mariadb/definition/backupclasses/mariadb"
 )
 
 func physicalBackup(name string) *backupv1alpha1.Backup {
@@ -39,39 +39,17 @@ func physicalBackup(name string) *backupv1alpha1.Backup {
 		Spec: backupv1alpha1.BackupSpec{
 			InstanceRef: commonv1alpha1.ObjectRef{Name: "db"},
 			StorageRef:  commonv1alpha1.ObjectRef{Name: "s3"},
-			ClassRef:    commonv1alpha1.ObjectRef{Name: classMariadbPhysical},
+			ClassRef:    commonv1alpha1.ObjectRef{Name: "mariadb"},
+			Parameters:  &runtime.RawExtension{Raw: []byte(`{"type":"physical"}`)},
 		},
 	}
-}
-
-func TestParsePhysicalBackupParameters(t *testing.T) {
-	t.Run("empty payload yields zero value", func(t *testing.T) {
-		got, err := parsePhysicalBackupParameters(nil)
-		require.NoError(t, err)
-		assert.Empty(t, got.Compression)
-		assert.Empty(t, got.Target)
-	})
-
-	t.Run("decodes compression and target", func(t *testing.T) {
-		got, err := parsePhysicalBackupParameters([]byte(`{"compression":"bzip2","target":"Replica"}`))
-		require.NoError(t, err)
-		assert.Equal(t, "bzip2", got.Compression)
-		assert.Equal(t, "Replica", got.Target)
-	})
-
-	t.Run("invalid JSON is a config error", func(t *testing.T) {
-		_, err := parsePhysicalBackupParameters([]byte(`{`))
-		require.Error(t, err)
-		var cfgErr *controller.BackupConfigError
-		assert.ErrorAs(t, err, &cfgErr)
-	})
 }
 
 func TestApplyPhysicalBackupParametersDefaultsTarget(t *testing.T) {
 	// Standalone instances have no replica, so the backup must target the
 	// primary (PreferReplica) rather than the operator's Replica default.
 	var spec mariadbv1alpha1.PhysicalBackupSpec
-	applyPhysicalBackupParameters(&spec, mariadbphysical.MariadbPhysicalBackupParameters{})
+	applyPhysicalBackupParameters(&spec, mariadbbackup.MariadbBackupParameters{})
 	require.NotNil(t, spec.Target)
 	assert.Equal(t, mariadbv1alpha1.PhysicalBackupTargetPreferReplica, *spec.Target)
 }
@@ -80,7 +58,7 @@ func TestSyncBackupDispatchesToPhysical(t *testing.T) {
 	mdb := &mariadbv1alpha1.MariaDB{ObjectMeta: metav1.ObjectMeta{Name: "db", Namespace: "ns"}}
 	sdkBackup := physicalBackup("backup-1")
 	sdkBackup.Spec.Parameters = &runtime.RawExtension{
-		Raw: []byte(`{"compression":"bzip2","target":"Replica"}`),
+		Raw: []byte(`{"type":"physical","compression":"bzip2","target":"Replica"}`),
 	}
 	c := newContextWith(t, mdb, s3BackupStorage("s3", "https://minio.example.com:9000"), sdkBackup)
 
@@ -182,7 +160,7 @@ func TestResolvePhysicalBootstrapFrom(t *testing.T) {
 
 	t.Run("logical source is not handled here", func(t *testing.T) {
 		source := physicalBackup("backup-1")
-		source.Spec.ClassRef = commonv1alpha1.ObjectRef{Name: classMariadbDump}
+		source.Spec.Parameters = &runtime.RawExtension{Raw: []byte(`{"type":"logical"}`)}
 		source.Status.State = backupv1alpha1.BackupStateSucceeded
 		c := newContextForInstance(t, instanceSeededFrom("backup-1"),
 			source, s3BackupStorage("s3", "https://minio.example.com:9000"))
@@ -308,11 +286,11 @@ func TestSyncPhysicalDataSourceStatus(t *testing.T) {
 func TestSyncScheduledBackupsDispatchesToPhysical(t *testing.T) {
 	mdb := &mariadbv1alpha1.MariaDB{ObjectMeta: metav1.ObjectMeta{Name: "db", Namespace: "ns"}}
 	instance := instanceWithSchedule(corev1alpha1.InstanceBackupSchedule{
-		Name:    "daily",
-		Enabled: true,
-		Cron:    "0 0 * * *",
+		Name:       "daily",
+		Enabled:    true,
+		Cron:       "0 0 * * *",
+		Parameters: &runtime.RawExtension{Raw: []byte(`{"type":"physical"}`)},
 	}, "s3")
-	instance.Spec.Backup.ClassRef = commonv1alpha1.ObjectRef{Name: classMariadbPhysical}
 	c := newContextForInstance(t, instance, mdb, s3BackupStorage("s3", "https://minio.example.com:9000"))
 
 	require.NoError(t, SyncScheduledBackups(c))
@@ -323,7 +301,7 @@ func TestSyncScheduledBackupsDispatchesToPhysical(t *testing.T) {
 	require.NotNil(t, opBackup.Spec.Schedule)
 	assert.Equal(t, "0 0 * * *", opBackup.Spec.Schedule.Cron)
 	assert.False(t, opBackup.Spec.Schedule.Suspend)
-	assert.Equal(t, classMariadbPhysical, opBackup.Labels[classLabel])
+	assert.Equal(t, backupTypePhysical, opBackup.Labels[typeLabel])
 	assert.Equal(t, "daily", opBackup.Labels[scheduleLabel])
 	require.NotNil(t, opBackup.Spec.InheritMetadata)
 	assert.Equal(t, "daily", opBackup.Spec.InheritMetadata.Labels[scheduleLabel])

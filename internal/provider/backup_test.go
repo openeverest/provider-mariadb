@@ -133,38 +133,36 @@ func TestBuildOperatorS3Storage(t *testing.T) {
 	})
 }
 
-func TestParseBackupParameters(t *testing.T) {
-	t.Run("nil parameters yield zero value", func(t *testing.T) {
-		got, err := parseBackupParameters(&backupv1alpha1.Backup{})
+func TestParseBackupParams(t *testing.T) {
+	t.Run("nil parameters yield zero value (logical)", func(t *testing.T) {
+		got, err := parseBackupParams(nil)
 		require.NoError(t, err)
+		assert.Empty(t, got.Type)
+		assert.False(t, isPhysical(got))
 		assert.Empty(t, got.Compression)
 		assert.Nil(t, got.Databases)
 		assert.Nil(t, got.IgnoreGlobalPriv)
 	})
 
-	t.Run("decodes provided parameters", func(t *testing.T) {
-		backup := &backupv1alpha1.Backup{
-			Spec: backupv1alpha1.BackupSpec{
-				Parameters: &runtime.RawExtension{
-					Raw: []byte(`{"compression":"gzip","databases":["app"],"ignoreGlobalPriv":true}`),
-				},
-			},
-		}
-		got, err := parseBackupParameters(backup)
+	t.Run("decodes logical parameters", func(t *testing.T) {
+		got, err := parseBackupParams([]byte(`{"compression":"gzip","databases":["app"],"ignoreGlobalPriv":true}`))
 		require.NoError(t, err)
+		assert.False(t, isPhysical(got))
 		assert.Equal(t, "gzip", got.Compression)
 		assert.Equal(t, []string{"app"}, got.Databases)
 		require.NotNil(t, got.IgnoreGlobalPriv)
 		assert.True(t, *got.IgnoreGlobalPriv)
 	})
 
+	t.Run("decodes physical type", func(t *testing.T) {
+		got, err := parseBackupParams([]byte(`{"type":"physical","target":"Replica"}`))
+		require.NoError(t, err)
+		assert.True(t, isPhysical(got))
+		assert.Equal(t, "Replica", got.Target)
+	})
+
 	t.Run("invalid JSON is a config error", func(t *testing.T) {
-		backup := &backupv1alpha1.Backup{
-			Spec: backupv1alpha1.BackupSpec{
-				Parameters: &runtime.RawExtension{Raw: []byte(`{`)},
-			},
-		}
-		_, err := parseBackupParameters(backup)
+		_, err := parseBackupParams([]byte(`{`))
 		require.Error(t, err)
 		var cfgErr *controller.BackupConfigError
 		assert.ErrorAs(t, err, &cfgErr)

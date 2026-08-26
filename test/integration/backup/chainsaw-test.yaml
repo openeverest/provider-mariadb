@@ -1,8 +1,8 @@
 ---
 # Physical backup & restore suite.
 #
-# End-to-end proof that a physical backup taken with the mariadb-physical
-# BackupClass can seed a brand-new Instance:
+# End-to-end proof that a physical backup (mariadb BackupClass, parameters.type
+# = physical) can seed a brand-new Instance:
 #   1. Deploy MinIO (S3) and create the backup bucket.
 #   2. Provision a source MariaDB, write a sentinel row.
 #   3. Take an on-demand physical backup to MinIO.
