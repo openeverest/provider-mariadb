@@ -162,6 +162,10 @@ test-integration-monitoring: ## Run monitoring integration tests.
 test-integration-galera: ## Run Galera HA integration tests.
 	. ./test/vars.sh && chainsaw test --config ./test/integration/.chainsaw.yaml ./test/integration/galera
 
+.PHONY: test-integration-replication
+test-integration-replication: ## Run async replication HA integration tests.
+	. ./test/vars.sh && chainsaw test --config ./test/integration/.chainsaw.yaml ./test/integration/replication
+
 .PHONY: test-integration-backup
 test-integration-backup: ## Run physical backup/restore integration tests (deploys MinIO).
 	. ./test/vars.sh && chainsaw test --config ./test/integration/.chainsaw.yaml ./test/integration/backup

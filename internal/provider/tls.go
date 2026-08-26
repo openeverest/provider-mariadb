@@ -67,9 +67,14 @@ func resolveTLSSettings(c *controller.Context) (tlsSettings, error) {
 	}
 
 	// Encrypt Galera SSTs by default for new TLS-enabled Galera instances.
-	settings.GaleraSSTEnabled = isGaleraTopology(c) && settings.Enabled
-	if params.TLS != nil && params.TLS.GaleraSSTEnabled != nil {
-		settings.GaleraSSTEnabled = bool(*params.TLS.GaleraSSTEnabled)
+	// SST encryption is a Galera-only concept, so the field is ignored (kept
+	// false) for other topologies rather than rejected — it lives in the shared
+	// TLS parameters struct and has no effect off Galera.
+	if isGaleraTopology(c) {
+		settings.GaleraSSTEnabled = settings.Enabled
+		if params.TLS != nil && params.TLS.GaleraSSTEnabled != nil {
+			settings.GaleraSSTEnabled = bool(*params.TLS.GaleraSSTEnabled)
+		}
 	}
 
 	return settings, nil
@@ -85,9 +90,6 @@ func validateTLS(c *controller.Context) error {
 	}
 	if !settings.Enabled && settings.GaleraSSTEnabled {
 		return fmt.Errorf("spec.components.%s.parameters.tls.galeraSSTEnabled cannot be true when TLS is disabled", common.ComponentEngine)
-	}
-	if !isGaleraTopology(c) && settings.GaleraSSTEnabled {
-		return fmt.Errorf("spec.components.%s.parameters.tls.galeraSSTEnabled is only supported by the galera topology", common.ComponentEngine)
 	}
 	return nil
 }

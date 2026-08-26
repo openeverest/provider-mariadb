@@ -75,12 +75,15 @@ func existingMariaDB(galera bool) *mariadbv1alpha1.MariaDB {
 	return mdb
 }
 
-func TestDefaultReplicasForTopology(t *testing.T) {
-	if got := defaultReplicasForTopology(false); got != 1 {
+func TestDefaultReplicas(t *testing.T) {
+	if got := defaultReplicas(newTopologyContext(t, "", nil)); got != 1 {
 		t.Errorf("standalone default = %d, want 1", got)
 	}
-	if got := defaultReplicasForTopology(true); got != 3 {
+	if got := defaultReplicas(newTopologyContext(t, "galera", nil)); got != 3 {
 		t.Errorf("galera default = %d, want 3", got)
+	}
+	if got := defaultReplicas(newTopologyContext(t, "replication", nil)); got != 3 {
+		t.Errorf("replication default = %d, want 3", got)
 	}
 }
 
@@ -106,8 +109,8 @@ func TestApplyGaleraOverlay(t *testing.T) {
 	}
 }
 
-func TestDefaultGaleraAffinity(t *testing.T) {
-	aff := defaultGaleraAffinity("my-instance")
+func TestDefaultHAAffinity(t *testing.T) {
+	aff := defaultHAAffinity("my-instance")
 	if aff == nil || aff.PodAntiAffinity == nil {
 		t.Fatalf("expected pod anti-affinity, got %+v", aff)
 	}

@@ -1,0 +1,129 @@
+---
+# Async replication HA suite.
+#
+# Provisions a real 3-node primary/replica cluster through the bundled
+# mariadb-operator, waits for it to become Running, and verifies that a client
+# can authenticate through the primary Service using the credentials published
+# in the connection Secret. Finally it tears the Instance down and asserts the
+# MariaDB CR is garbage-collected.
+apiVersion: chainsaw.kyverno.io/v1alpha1
+kind: Test
+metadata:
+  name: replication
+spec:
+  description: |
+    Create a replication Instance, wait for a real 3-node MariaDB cluster to come
+    up, connect to it through the primary Service with the generated
+    login/password, then delete it.
+
+  # Collect diagnostics when a step fails.
+  catch:
+    - script:
+        content: kubectl -n $NAMESPACE get instance,mariadb,pods,svc,pdb -o wide
+    - script:
+        content: kubectl -n $NAMESPACE get mariadb -o yaml
+    - script:
+        content: |
+          ns=$(kubectl get deploy -A -l app.kubernetes.io/name=provider-mariadb \
+            -o jsonpath='{.items[0].metadata.namespace}')
+          [ -n "$ns" ] && kubectl -n "$ns" logs -l app.kubernetes.io/name=provider-mariadb \
+            --all-containers --tail 100 || echo "provider deployment not found"
+
+  steps:
+    - name: provider-deployed
+      try:
+        - script:
+            content: |
+              set -eu
+              # Provider is installed in provider-system (CI) or default (plugin-hub);
+              # assert an available replica regardless of namespace.
+              avail=$(kubectl get deploy -A -l app.kubernetes.io/name=provider-mariadb \
+                -o jsonpath='{.items[*].status.availableReplicas}')
+              echo "provider available replicas: ${avail:-0}"
+              echo "${avail}" | grep -q '[1-9]'
+
+    - name: create-instance
+      try:
+        - apply:
+            file: 10-create-instance.yaml
+        - assert:
+            file: 10-assert.yaml
+
+    # Bootstrapping a real 3-node replication cluster (StatefulSet + PVCs +
+    # primary election + replica configuration) takes a while, so give the
+    # readiness assertion a generous timeout.
+    - name: cluster-running
+      timeouts:
+        assert: 12m
+      try:
+        - assert:
+            file: 11-assert.yaml
+
+    # Authenticate against the running cluster through the primary Service using
+    # the credentials published in the connection Secret. A throwaway client pod
+    # runs SELECT 1; a failure (including an empty password) fails the step.
+    - name: connect
+      timeouts:
+        exec: 3m
+      try:
+        - script:
+            content: |
+              set -eu
+              secret="test-replication-conn"
+
+              user=$(kubectl -n "$NAMESPACE" get secret "$secret" -o jsonpath='{.data.username}' | base64 -d)
+              pass=$(kubectl -n "$NAMESPACE" get secret "$secret" -o jsonpath='{.data.password}' | base64 -d)
+              host=$(kubectl -n "$NAMESPACE" get secret "$secret" -o jsonpath='{.data.host}' | base64 -d)
+              port=$(kubectl -n "$NAMESPACE" get secret "$secret" -o jsonpath='{.data.port}' | base64 -d)
+
+              if [ -z "$pass" ]; then
+                echo "FAIL: connection secret '$secret' has an empty password" >&2
+                exit 1
+              fi
+              echo "connecting as '$user' to $host:$port"
+
+              # Mount the CA copied into the OpenEverest connection Secret,
+              # verify the primary Service certificate, and prove TLS was negotiated.
+              kubectl -n "$NAMESPACE" run mariadb-replication-conn-check \
+                --rm -i --restart=Never \
+                --image=mariadb:11.4 \
+                --overrides='{
+                  "spec": {
+                    "containers": [{
+                      "name": "mariadb-replication-conn-check",
+                      "image": "mariadb:11.4",
+                      "command": ["sh", "-c"],
+                      "args": ["set -eu; cipher=$(mariadb -h \"$DB_HOST\" -P \"$DB_PORT\" -u \"$DB_USER\" --ssl-ca=/tls/ca.crt --ssl-verify-server-cert -Nse \"SHOW STATUS LIKE '\''Ssl_cipher'\'';\" | awk '\''{print $2}'\''); test -n \"$cipher\"; echo \"TLS cipher: $cipher\""],
+                      "env": [
+                        {"name": "DB_HOST", "valueFrom": {"secretKeyRef": {"name": "test-replication-conn", "key": "host"}}},
+                        {"name": "DB_PORT", "valueFrom": {"secretKeyRef": {"name": "test-replication-conn", "key": "port"}}},
+                        {"name": "DB_USER", "valueFrom": {"secretKeyRef": {"name": "test-replication-conn", "key": "username"}}},
+                        {"name": "MYSQL_PWD", "valueFrom": {"secretKeyRef": {"name": "test-replication-conn", "key": "password"}}}
+                      ],
+                      "volumeMounts": [{"name": "tls", "mountPath": "/tls", "readOnly": true}]
+                    }],
+                    "volumes": [{"name": "tls", "secret": {"secretName": "test-replication-conn", "items": [{"key": "ca.crt", "path": "ca.crt"}]}}]
+                  }
+                }'
+
+    - name: delete-instance
+      try:
+        - delete:
+            ref:
+              apiVersion: core.openeverest.io/v1alpha1
+              kind: Instance
+              name: test-replication
+        - wait:
+            apiVersion: core.openeverest.io/v1alpha1
+            kind: Instance
+            name: test-replication
+            timeout: 2m
+            for:
+              deletion: {}
+        - wait:
+            apiVersion: k8s.mariadb.com/v1alpha1
+            kind: MariaDB
+            name: test-replication
+            timeout: 3m
+            for:
+              deletion: {}

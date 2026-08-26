@@ -1,0 +1,32 @@
+# Example Instance with the async replication HA topology (primary/replica).
+#
+# One primary handles writes while replicas asynchronously replicate the binary
+# log. At least 2 nodes are required (one primary and one replica); the provider
+# defaults new replication clusters to 3 nodes and applies a soft pod
+# anti-affinity so nodes are spread across hosts.
+#
+# Clients connect through the primary Service (<name>-primary), which routes
+# writes to the current primary node. The connection details in the generated
+# Secret already point at it.
+#
+# The topology is immutable: an existing standalone instance cannot be switched
+# to replication (or vice versa).
+apiVersion: core.openeverest.io/v1alpha1
+kind: Instance
+metadata:
+  name: mariadb-replication
+spec:
+  providerRef:
+    name: mariadb
+  topology:
+    type: replication
+  components:
+    engine:
+      type: mariadb
+      replicas: 3
+      resources:
+        requests:
+          cpu: 500m
+          memory: 2G
+      storage:
+        size: 10Gi

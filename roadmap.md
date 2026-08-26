@@ -202,7 +202,7 @@ Operator building blocks:
    backups (P4) first without PITR. *(Recommended near-term.)*
 2. **Enable physical backups + async replication topology** as the PITR foundation:
    - [ ] Add `PhysicalBackup` support (`internal/provider`, new backup class or class option).
-   - [ ] Add the `replication` topology (P2 deferred item).
+   - [x] Add the `replication` topology (P2 deferred item).
    - [ ] Wire `PointInTimeRecovery` CR (S3 storage, `archiveTimeout`, `strictMode`).
    - [ ] Map `spec.backup.storages[].pitr.enabled` → `PointInTimeRecovery`, advertise
          `providerManaged.supportsPITR: true` on the class and enforce

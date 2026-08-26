@@ -1,0 +1,212 @@
+# Replication topology definition: async primary/replica MariaDB for HA.
+# One primary handles writes; replicas asynchronously replicate the binary log.
+# At least 2 nodes are required (one primary and one replica); the provider
+# defaults new clusters to 3 nodes (one primary and two replicas).
+
+config:
+  parametersSchema: ReplicationTopologyParameters
+  components:
+    engine:
+      defaults:
+        replicas: 3
+    monitoring:
+      optional: true
+
+ui:
+  sections:
+    databaseVersion:
+      label: "Database Version"
+      description: "Select the MariaDB version to deploy."
+      components:
+        version:
+          uiType: select
+          path: spec.version
+          fieldParams:
+            label: "Database Version"
+            optionsPath: spec.versions
+            optionsPathConfig:
+              labelPath: "name"
+              valuePath: "name"
+            modes:
+              edit:
+                disabled: true
+              restore:
+                disabled: true
+          validation:
+            required: true
+
+    resources:
+      label: "Resources"
+      description: "Configure the CPU, memory, and storage for each replication node."
+      components:
+        nodes:
+          uiType: group
+          components:
+            numberOfNodes:
+              path: "spec.components.engine.replicas"
+              uiType: number
+              fieldParams:
+                label: "Number of nodes"
+                defaultValue: 3
+                helperText: "One primary handles writes; the remaining nodes are read replicas."
+              validation:
+                required: true
+                min: 2
+                int: true
+                celExpressions:
+                  - celExpr: "spec.components.engine.replicas >= 2"
+                    message: "Replication requires at least 2 nodes: one primary and one replica"
+
+            resources:
+              uiType: group
+              groupType: line
+              components:
+                cpu:
+                  path: "spec.components.engine.resources.limits.cpu"
+                  uiType: number
+                  fieldParams:
+                    label: "CPU"
+                    defaultValue: 1
+                    step: 1
+                  validation:
+                    min: 0.5
+                    required: true
+                memory:
+                  path: "spec.components.engine.resources.limits.memory"
+                  uiType: number
+                  fieldParams:
+                    label: "Memory"
+                    defaultValue: 2
+                    step: 0.5
+                    badge: "Gi"
+                    badgeToApi: true
+                  validation:
+                    min: 0.5
+                    required: true
+                disk:
+                  path: "spec.components.engine.storage.size"
+                  uiType: number
+                  fieldParams:
+                    label: "Disk"
+                    defaultValue: 10
+                    badge: "Gi"
+                    badgeToApi: true
+                  validation:
+                    min: 1
+                    int: true
+                    required: true
+                    modes:
+                      edit:
+                        celExpressions:
+                          - celExpr: "spec.components.engine.storage.size >= original.spec.components.engine.storage.size"
+                            message: "Disk size cannot be decreased"
+          componentsOrder:
+            - numberOfNodes
+            - resources
+
+    monitoring:
+      label: "Monitoring"
+      description: "Expose database metrics and integrate them with a Prometheus stack."
+      components:
+        enabled:
+          uiType: toggle
+          path: spec.components.monitoring.parameters.enabled
+          fieldParams:
+            label: "Enable metrics"
+            defaultValue: false
+      componentsOrder:
+        - enabled
+
+    security:
+      label: "Security"
+      description: "Configure encryption for MariaDB client traffic."
+      components:
+        tlsEnabled:
+          uiType: select
+          path: spec.components.engine.parameters.tls.enabled
+          fieldParams:
+            label: "Enable TLS"
+            defaultValue: "true"
+            options:
+              - label: "Enabled"
+                value: "true"
+              - label: "Disabled"
+                value: "false"
+        tlsRequired:
+          uiType: select
+          path: spec.components.engine.parameters.tls.required
+          fieldParams:
+            label: "Require encrypted connections"
+            helperText: "Reject clients that do not connect using TLS. Enable only after all clients trust the published CA."
+            defaultValue: "false"
+            options:
+              - label: "Optional"
+                value: "false"
+              - label: "Required"
+                value: "true"
+      componentsOrder:
+        - tlsEnabled
+        - tlsRequired
+
+    advanced:
+      label: "Advanced configuration"
+      description: "Configure storage class and optional MariaDB settings."
+      components:
+        storageClass:
+          uiType: select
+          path: spec.components.engine.storage.storageClass
+          fieldParams:
+            label: "Storage class"
+            modes:
+              edit:
+                disabled: true
+          dataSource:
+            provider: storageClasses
+        externalAccess:
+          uiType: select
+          path: spec.components.engine.service.serviceType
+          fieldParams:
+            label: "External access"
+            defaultValue: "ClusterIP"
+            options:
+              - label: "ClusterIP"
+                value: "ClusterIP"
+              - label: "LoadBalancer"
+                value: "LoadBalancer"
+              - label: "NodePort"
+                value: "NodePort"
+        configuration:
+          uiType: text
+          path: spec.components.engine.config
+          fieldParams:
+            label: "Engine configuration (my.cnf)"
+            placeholder: |
+              [mariadb]
+              max_connections=100
+            multiline: true
+            minRows: 3
+            maxRows: 8
+        nodeAffinity:
+          uiType: text
+          path: spec.components.engine.parameters.nodeAffinity
+          fieldParams:
+            label: "Node targeting"
+            helperText: "Restrict pods to nodes matching these label rules. One rule per line: '<key> <operator> [values]' (operator: In, NotIn, Exists, DoesNotExist)."
+            placeholder: |
+              disktype In ssd,nvme
+              gpu Exists
+            multiline: true
+            minRows: 2
+            maxRows: 6
+      componentsOrder:
+        - storageClass
+        - externalAccess
+        - configuration
+        - nodeAffinity
+
+  sectionsOrder:
+    - databaseVersion
+    - resources
+    - monitoring
+    - security
+    - advanced
