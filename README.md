@@ -86,7 +86,7 @@ The provider chart is published as an OCI artifact:
 ```bash
 helm install provider-mariadb \
   oci://ghcr.io/openeverest/charts/provider-mariadb \
-  --version 0.1.2 \
+  --version 0.1.3 \
   --namespace everest-system
 ```
 
@@ -96,7 +96,7 @@ helm install provider-mariadb \
 Upgrade and uninstall:
 
 ```bash
-helm upgrade provider-mariadb oci://ghcr.io/openeverest/charts/provider-mariadb --version 0.1.2
+helm upgrade provider-mariadb oci://ghcr.io/openeverest/charts/provider-mariadb --version 0.1.3
 helm uninstall provider-mariadb --namespace everest-system
 ```
 
