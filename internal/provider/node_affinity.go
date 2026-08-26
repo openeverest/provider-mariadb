@@ -24,12 +24,12 @@ import (
 
 // buildAffinity assembles the operator's AffinityConfig from the raw engine affinity
 // (an escape hatch for full corev1.Affinity), the parsed node-targeting rules, and the
-// Galera default pod anti-affinity. Node targeting is merged with — not a replacement
-// for — the Galera anti-affinity so HA pod spreading is preserved.
+// HA default pod anti-affinity. Node targeting is merged with — not a replacement
+// for — the anti-affinity so HA pod spreading is preserved.
 func buildAffinity(
 	raw *corev1.Affinity,
 	nodeAffinityRules string,
-	galera bool,
+	ha bool,
 	instanceName string,
 ) (*mariadbv1alpha1.AffinityConfig, error) {
 	cfg := convertAffinity(raw)
@@ -47,8 +47,8 @@ func buildAffinity(
 		}
 	}
 
-	if galera {
-		antiAffinity := defaultGaleraAffinity(instanceName).PodAntiAffinity
+	if ha {
+		antiAffinity := defaultHAAffinity(instanceName).PodAntiAffinity
 		switch {
 		case cfg == nil:
 			cfg = &mariadbv1alpha1.AffinityConfig{

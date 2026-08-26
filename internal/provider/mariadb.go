@@ -94,11 +94,14 @@ func SyncMariaDB(c *controller.Context) error {
 		}
 	}
 
-	// Topology: standalone (default) or Galera HA.
+	// Topology: standalone (default), Galera HA or async replication HA.
 	galera := isGaleraTopology(c)
+	replication := isReplicationTopology(c)
+	ha := galera || replication
 
-	// Replicas default depends on the topology (1 for standalone, 3 for Galera).
-	replicas := defaultReplicasForTopology(galera)
+	// Replicas default depends on the topology (1 for standalone, 3 for Galera
+	// and replication).
+	replicas := defaultReplicas(c)
 	if engine.Replicas != nil {
 		replicas = *engine.Replicas
 	}
@@ -132,8 +135,8 @@ func SyncMariaDB(c *controller.Context) error {
 	}
 
 	// Exposure: map the requested Service onto the topology's client-facing
-	// Service. Standalone routes clients to the general Service (<name>); Galera
-	// routes writes to the primary Service (<name>-primary).
+	// Service. Standalone routes clients to the general Service (<name>); HA
+	// topologies route writes to the primary Service (<name>-primary).
 	serviceTemplate := configureService(engine.Service)
 
 	// Metrics: map the optional monitoring component onto spec.metrics. Nil when
@@ -145,9 +148,9 @@ func SyncMariaDB(c *controller.Context) error {
 
 	// Affinity: map the engine component's Kubernetes affinity onto the
 	// operator's trimmed AffinityConfig. Combines the raw affinity escape hatch,
-	// node-targeting rules, and — for Galera — a soft pod anti-affinity that
-	// spreads nodes without blocking scheduling.
-	affinity, err := buildAffinity(engine.Affinity, params.NodeAffinity, galera, c.Name())
+	// node-targeting rules, and — for HA topologies — a soft pod anti-affinity
+	// that spreads nodes without blocking scheduling.
+	affinity, err := buildAffinity(engine.Affinity, params.NodeAffinity, ha, c.Name())
 	if err != nil {
 		return fmt.Errorf("build affinity: %w", err)
 	}
@@ -191,6 +194,9 @@ func SyncMariaDB(c *controller.Context) error {
 		if galera {
 			mariadbCR.Spec.Galera = &mariadbv1alpha1.Galera{Enabled: true}
 		}
+		if replication {
+			mariadbCR.Spec.Replication = &mariadbv1alpha1.Replication{Enabled: true}
+		}
 	} else {
 		// Overlay only the managed, mutable fields; preserve operator defaults.
 		mariadbCR = existing
@@ -200,14 +206,15 @@ func SyncMariaDB(c *controller.Context) error {
 		mariadbCR.Spec.MyCnf = myCnf
 		applyMetricsOverlay(mariadbCR, metrics)
 		applyGaleraOverlay(mariadbCR, galera)
+		applyReplicationOverlay(mariadbCR, replication)
 		if resourceReqs != nil {
 			mariadbCR.Spec.Resources = resourceReqs
 		}
 	}
 
 	// Exposure: route the user's Service request to the topology's client-facing
-	// Service. Galera uses the primary Service; standalone uses the general one.
-	if galera {
+	// Service. HA topologies use the primary Service; standalone uses the general one.
+	if ha {
 		mariadbCR.Spec.PrimaryService = serviceTemplate
 	} else {
 		mariadbCR.Spec.Service = serviceTemplate
@@ -393,12 +400,12 @@ func buildConnectionDetails(c *controller.Context) (controller.ConnectionDetails
 }
 
 // resolveHost returns the externally reachable host for the topology's
-// client-facing Service: the primary Service (<name>-primary) for Galera, the
-// general Service (<name>) for standalone. It prefers a LoadBalancer ingress
+// client-facing Service: the primary Service (<name>-primary) for HA topologies,
+// the general Service (<name>) for standalone. It prefers a LoadBalancer ingress
 // address when available, otherwise the internal cluster FQDN.
 func resolveHost(c *controller.Context) string {
 	serviceName := c.Name()
-	if isGaleraTopology(c) {
+	if isHATopology(c) {
 		serviceName = c.Name() + primaryServiceSuffix
 	}
 	internal := fmt.Sprintf("%s.%s.svc", serviceName, c.Namespace())

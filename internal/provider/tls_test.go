@@ -82,6 +82,17 @@ func TestResolveTLSSettings(t *testing.T) {
 			want:     tlsSettings{Enabled: true, GaleraSSTEnabled: true},
 		},
 		{
+			name:     "replication defaults to TLS without SST",
+			topology: "replication",
+			want:     tlsSettings{Enabled: true},
+		},
+		{
+			name:     "SST parameter is ignored off Galera",
+			topology: "replication",
+			params:   `{"tls":{"galeraSSTEnabled":true}}`,
+			want:     tlsSettings{Enabled: true},
+		},
+		{
 			name:   "TLS can be disabled explicitly",
 			params: `{"tls":{"enabled":false}}`,
 			want:   tlsSettings{},
@@ -116,7 +127,8 @@ func TestValidateTLS(t *testing.T) {
 		{name: "defaults are valid"},
 		{name: "required with TLS", params: `{"tls":{"required":true}}`},
 		{name: "required while disabled", params: `{"tls":{"enabled":false,"required":true}}`, wantErr: true},
-		{name: "SST encryption on standalone", params: `{"tls":{"galeraSSTEnabled":true}}`, wantErr: true},
+		{name: "SST encryption ignored on standalone", params: `{"tls":{"galeraSSTEnabled":true}}`},
+		{name: "SST encryption ignored on replication", topology: "replication", params: `{"tls":{"galeraSSTEnabled":true}}`},
 		{name: "SST encryption while disabled", topology: "galera", params: `{"tls":{"enabled":false,"galeraSSTEnabled":true}}`, wantErr: true},
 	}
 

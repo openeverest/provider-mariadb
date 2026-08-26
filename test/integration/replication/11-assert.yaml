@@ -1,0 +1,43 @@
+# Expected outcome of the cluster-running step: once the real mariadb-operator
+# bootstraps the 3-node replication cluster, the provider's Status() surfaces
+# phase Ready and the runtime publishes connection details pointing at the
+# primary Service. The MariaDB CR reports an elected primary.
+apiVersion: core.openeverest.io/v1alpha1
+kind: Instance
+metadata:
+  name: test-replication
+status:
+  phase: Ready
+---
+# The operator elects a primary and records it in the MariaDB status; a
+# non-empty currentPrimary proves replication was configured.
+apiVersion: k8s.mariadb.com/v1alpha1
+kind: MariaDB
+metadata:
+  name: test-replication
+status:
+  (currentPrimary != null): true
+---
+apiVersion: v1
+kind: Secret
+metadata:
+  name: test-replication-ca-bundle
+(base64_decode(data."ca.crt") != ''): true
+---
+apiVersion: v1
+kind: Secret
+metadata:
+  name: test-replication-conn
+# The runtime writes connection details here; a non-empty password proves the
+# initial-user credentials were generated. The host resolves to the primary
+# Service (test-replication-primary) for the replication topology.
+(base64_decode(data.password) != ''): true
+(contains(base64_decode(data.host), 'test-replication-primary')): true
+(base64_decode(data.tls) == 'true'): true
+(base64_decode(data."ca.crt") != ''): true
+---
+# The primary Service the provider maps exposure and connection details to.
+apiVersion: v1
+kind: Service
+metadata:
+  name: test-replication-primary

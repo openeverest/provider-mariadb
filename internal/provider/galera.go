@@ -41,13 +41,17 @@ func isGaleraTopology(c *controller.Context) bool {
 	return c.Instance().GetTopologyType() == string(definition.TopologyTypeGalera)
 }
 
-// defaultReplicasForTopology returns the default replica count applied when the
-// user leaves engine.replicas unset.
-func defaultReplicasForTopology(galera bool) int32 {
-	if galera {
+// defaultReplicas returns the default replica count applied when the user leaves
+// engine.replicas unset, based on the selected topology.
+func defaultReplicas(c *controller.Context) int32 {
+	switch {
+	case isGaleraTopology(c):
 		return galeraDefaultReplicas
+	case isReplicationTopology(c):
+		return replicationDefaultReplicas
+	default:
+		return standaloneDefaultReplicas
 	}
-	return standaloneDefaultReplicas
 }
 
 // applyGaleraOverlay enables Galera on the MariaDB spec while preserving the
@@ -65,11 +69,11 @@ func applyGaleraOverlay(mariadb *mariadbv1alpha1.MariaDB, galera bool) {
 	mariadb.Spec.Galera.Enabled = true
 }
 
-// defaultGaleraAffinity returns a soft (preferred) pod anti-affinity that spreads
+// defaultHAAffinity returns a soft (preferred) pod anti-affinity that spreads
 // MariaDB pods across nodes for HA without blocking scheduling on clusters with
 // fewer nodes than replicas. It is applied only when the user provides no
 // explicit affinity, and matches the operator's own pod instance label.
-func defaultGaleraAffinity(instanceName string) *mariadbv1alpha1.AffinityConfig {
+func defaultHAAffinity(instanceName string) *mariadbv1alpha1.AffinityConfig {
 	return &mariadbv1alpha1.AffinityConfig{
 		Affinity: mariadbv1alpha1.Affinity{
 			PodAntiAffinity: &mariadbv1alpha1.PodAntiAffinity{

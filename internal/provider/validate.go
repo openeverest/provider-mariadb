@@ -151,30 +151,33 @@ func validateService(svc *corev1alpha1.Service) error {
 	}
 }
 
-// validateTopology checks the selected topology, its Galera-specific replica
+// validateTopology checks the selected topology, its per-topology replica
 // rules, and that the topology is not being changed on an existing instance.
 func validateTopology(c *controller.Context) error {
 	topology := c.Instance().GetTopologyType()
 	switch topology {
-	case "", string(definition.TopologyTypeStandalone), string(definition.TopologyTypeGalera):
-	default:
-		return fmt.Errorf(
-			"unsupported spec.topology.type %q; supported values are %q and %q",
-			topology, definition.TopologyTypeStandalone, definition.TopologyTypeGalera,
-		)
-	}
-
-	galera := topology == string(definition.TopologyTypeGalera)
-	if galera {
-		if err := validateGaleraReplicas(c); err != nil {
-			return err
-		}
-	} else {
+	case "", string(definition.TopologyTypeStandalone):
 		if err := validateStandaloneReplicas(c); err != nil {
 			return err
 		}
+	case string(definition.TopologyTypeGalera):
+		if err := validateGaleraReplicas(c); err != nil {
+			return err
+		}
+	case string(definition.TopologyTypeReplication):
+		if err := validateReplicationReplicas(c); err != nil {
+			return err
+		}
+	default:
+		return fmt.Errorf(
+			"unsupported spec.topology.type %q; supported values are %q, %q and %q",
+			topology,
+			definition.TopologyTypeStandalone,
+			definition.TopologyTypeGalera,
+			definition.TopologyTypeReplication,
+		)
 	}
-	return validateTopologyImmutable(c, galera)
+	return validateTopologyImmutable(c, topology)
 }
 
 // validateStandaloneReplicas enforces that the standalone topology runs a single
@@ -183,7 +186,7 @@ func validateStandaloneReplicas(c *controller.Context) error {
 	engine := c.Instance().Spec.Components[common.ComponentEngine]
 	if engine.Replicas != nil && *engine.Replicas != standaloneDefaultReplicas {
 		return fmt.Errorf(
-			"standalone topology supports a single node only, got %d; use the galera topology for multiple nodes",
+			"standalone topology supports a single node only, got %d; use the galera or replication topology for multiple nodes",
 			*engine.Replicas,
 		)
 	}
@@ -210,11 +213,28 @@ func validateGaleraReplicas(c *controller.Context) error {
 	return nil
 }
 
-// validateTopologyImmutable rejects switching an existing instance between the
-// standalone and Galera topologies. The provider has no access to the previous
-// Instance spec at admission time, so it compares against the Galera state of
-// the already-provisioned MariaDB CR.
-func validateTopologyImmutable(c *controller.Context, galera bool) error {
+// validateReplicationReplicas enforces that the replication topology runs at
+// least 2 nodes: one primary and one replica.
+func validateReplicationReplicas(c *controller.Context) error {
+	engine := c.Instance().Spec.Components[common.ComponentEngine]
+	replicas := replicationDefaultReplicas
+	if engine.Replicas != nil {
+		replicas = *engine.Replicas
+	}
+	if replicas < 2 {
+		return fmt.Errorf(
+			"replication topology requires at least 2 engine replicas (one primary and one replica), got %d",
+			replicas,
+		)
+	}
+	return nil
+}
+
+// validateTopologyImmutable rejects switching an existing instance between
+// topologies. The provider has no access to the previous Instance spec at
+// admission time, so it compares against the topology of the already-provisioned
+// MariaDB CR.
+func validateTopologyImmutable(c *controller.Context, topology string) error {
 	existing := &mariadbv1alpha1.MariaDB{}
 	if err := c.Get(existing, c.Name()); err != nil {
 		if apierrors.IsNotFound(err) {
@@ -222,10 +242,30 @@ func validateTopologyImmutable(c *controller.Context, galera bool) error {
 		}
 		return fmt.Errorf("get MariaDB: %w", err)
 	}
-	if existing.IsGaleraEnabled() != galera {
+	if existingTopology(existing) != normalizeTopology(topology) {
 		return fmt.Errorf("spec.topology is immutable and cannot be changed on an existing instance")
 	}
 	return nil
+}
+
+// normalizeTopology maps an empty topology to the standalone default.
+func normalizeTopology(topology string) definition.TopologyType {
+	if topology == "" {
+		return definition.TopologyTypeStandalone
+	}
+	return definition.TopologyType(topology)
+}
+
+// existingTopology derives the topology of a provisioned MariaDB CR from its HA state.
+func existingTopology(mdb *mariadbv1alpha1.MariaDB) definition.TopologyType {
+	switch {
+	case mdb.IsGaleraEnabled():
+		return definition.TopologyTypeGalera
+	case mdb.IsReplicationEnabled():
+		return definition.TopologyTypeReplication
+	default:
+		return definition.TopologyTypeStandalone
+	}
 }
 
 // mustParseQuantity is a helper that panics on invalid quantity strings (compile-time constants only).

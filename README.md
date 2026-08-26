@@ -62,6 +62,7 @@ provider itself is covered under [Installation](#installation).
 | Vertical scaling (CPU / memory) | ✅ | `spec.components.engine.resources` |
 | Version upgrades | ✅ | of the deployed MariaDB version — change `spec.version`; see [Versions](#versions) |
 | High availability (Galera) | ✅ | `spec.topology.type: galera` — multi-master cluster; odd node count (default 3) |
+| High availability (replication) | ✅ | `spec.topology.type: replication` — async primary/replica cluster; at least 2 nodes (default 3) |
 | Custom configuration | ✅ | `my.cnf` via the engine component's `configuration` parameter |
 | Monitoring | ✅ | opt-in via the `monitoring` component; deploys `mysqld-exporter` and a Prometheus `ServiceMonitor` — requires the `ServiceMonitor` CRD (`monitoring.coreos.com`) |
 | Pod scheduling (affinity) | ✅ | `spec.components.engine.affinity` — `nodeAffinity` and `podAntiAffinity` are mapped to the operator; `podAffinity` is rejected |
@@ -171,6 +172,7 @@ also encrypt state snapshot transfers by default; this can be changed with
 |---|---|---|
 | `standalone` | ✅ | Single MariaDB instance (no replication or Galera) |
 | `galera` | | Multi-master Galera cluster for high availability (odd number of nodes, default 3) |
+| `replication` | | Async primary/replica cluster for high availability (at least 2 nodes, default 3) |
 <!-- END GENERATED: topologies -->
 
 ## Versions

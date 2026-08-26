@@ -64,6 +64,14 @@ spec:
       parametersSchema:
         openAPIV3Schema:
           type: object
+    replication:
+      components:
+        engine: {}
+        monitoring:
+          optional: true
+      parametersSchema:
+        openAPIV3Schema:
+          type: object
     standalone:
       components:
         engine: {}
@@ -264,6 +272,198 @@ spec:
             - tlsRequired
             - galeraSSTEnabled
           description: Configure encryption for MariaDB client traffic and Galera state transfers.
+          label: Security
+      sectionsOrder:
+        - databaseVersion
+        - resources
+        - monitoring
+        - security
+        - advanced
+    replication:
+      sections:
+        advanced:
+          components:
+            configuration:
+              fieldParams:
+                label: Engine configuration (my.cnf)
+                maxRows: 8
+                minRows: 3
+                multiline: true
+                placeholder: |
+                  [mariadb]
+                  max_connections=100
+              path: spec.components.engine.config
+              uiType: text
+            externalAccess:
+              fieldParams:
+                defaultValue: ClusterIP
+                label: External access
+                options:
+                  - label: ClusterIP
+                    value: ClusterIP
+                  - label: LoadBalancer
+                    value: LoadBalancer
+                  - label: NodePort
+                    value: NodePort
+              path: spec.components.engine.service.serviceType
+              uiType: select
+            nodeAffinity:
+              fieldParams:
+                helperText: 'Restrict pods to nodes matching these label rules. One rule per line: ''<key> <operator> [values]'' (operator: In, NotIn, Exists, DoesNotExist).'
+                label: Node targeting
+                maxRows: 6
+                minRows: 2
+                multiline: true
+                placeholder: |
+                  disktype In ssd,nvme
+                  gpu Exists
+              path: spec.components.engine.parameters.nodeAffinity
+              uiType: text
+            storageClass:
+              dataSource:
+                provider: storageClasses
+              fieldParams:
+                label: Storage class
+                modes:
+                  edit:
+                    disabled: true
+              path: spec.components.engine.storage.storageClass
+              uiType: select
+          componentsOrder:
+            - storageClass
+            - externalAccess
+            - configuration
+            - nodeAffinity
+          description: Configure storage class and optional MariaDB settings.
+          label: Advanced configuration
+        databaseVersion:
+          components:
+            version:
+              fieldParams:
+                label: Database Version
+                modes:
+                  edit:
+                    disabled: true
+                  restore:
+                    disabled: true
+                optionsPath: spec.versions
+                optionsPathConfig:
+                  labelPath: name
+                  valuePath: name
+              path: spec.version
+              uiType: select
+              validation:
+                required: true
+          description: Select the MariaDB version to deploy.
+          label: Database Version
+        monitoring:
+          components:
+            enabled:
+              fieldParams:
+                defaultValue: false
+                label: Enable metrics
+              path: spec.components.monitoring.parameters.enabled
+              uiType: toggle
+          componentsOrder:
+            - enabled
+          description: Expose database metrics and integrate them with a Prometheus stack.
+          label: Monitoring
+        resources:
+          components:
+            nodes:
+              components:
+                numberOfNodes:
+                  fieldParams:
+                    defaultValue: 3
+                    helperText: One primary handles writes; the remaining nodes are read replicas.
+                    label: Number of nodes
+                  path: spec.components.engine.replicas
+                  uiType: number
+                  validation:
+                    celExpressions:
+                      - celExpr: spec.components.engine.replicas >= 2
+                        message: 'Replication requires at least 2 nodes: one primary and one replica'
+                    int: true
+                    min: 2
+                    required: true
+                resources:
+                  components:
+                    cpu:
+                      fieldParams:
+                        defaultValue: 1
+                        label: CPU
+                        step: 1
+                      path: spec.components.engine.resources.limits.cpu
+                      uiType: number
+                      validation:
+                        min: 0.5
+                        required: true
+                    disk:
+                      fieldParams:
+                        badge: Gi
+                        badgeToApi: true
+                        defaultValue: 10
+                        label: Disk
+                      path: spec.components.engine.storage.size
+                      uiType: number
+                      validation:
+                        int: true
+                        min: 1
+                        modes:
+                          edit:
+                            celExpressions:
+                              - celExpr: spec.components.engine.storage.size >= original.spec.components.engine.storage.size
+                                message: Disk size cannot be decreased
+                        required: true
+                    memory:
+                      fieldParams:
+                        badge: Gi
+                        badgeToApi: true
+                        defaultValue: 2
+                        label: Memory
+                        step: 0.5
+                      path: spec.components.engine.resources.limits.memory
+                      uiType: number
+                      validation:
+                        min: 0.5
+                        required: true
+                  groupType: line
+                  uiType: group
+              componentsOrder:
+                - numberOfNodes
+                - resources
+              uiType: group
+          description: Configure the CPU, memory, and storage for each replication node.
+          label: Resources
+        security:
+          components:
+            tlsEnabled:
+              fieldParams:
+                defaultValue: "true"
+                label: Enable TLS
+                options:
+                  - label: Enabled
+                    value: "true"
+                  - label: Disabled
+                    value: "false"
+              path: spec.components.engine.parameters.tls.enabled
+              uiType: select
+            tlsRequired:
+              fieldParams:
+                defaultValue: "false"
+                helperText: Reject clients that do not connect using TLS. Enable only after all clients trust the published CA.
+                label: Require encrypted connections
+                options:
+                  - label: Optional
+                    value: "false"
+                  - label: Required
+                    value: "true"
+              path: spec.components.engine.parameters.tls.required
+              uiType: select
+          componentsOrder:
+            - tlsEnabled
+            - tlsRequired
+          description: Configure encryption for MariaDB client traffic.
           label: Security
       sectionsOrder:
         - databaseVersion
