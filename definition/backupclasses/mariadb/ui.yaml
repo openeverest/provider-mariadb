@@ -1,0 +1,51 @@
+# UI rendering hints for the MariaDB BackupClass.
+# Inlined verbatim under spec.uiSchema in the generated manifest; treated as
+# opaque by the runtime. Fields are grouped by the modal that renders them:
+#   backup — on-demand backup modal and schedule form (fields backed by
+#            parametersSchema.openAPIV3Schema, addressed as parameters.<leaf>).
+#
+# Note: fields that only apply to one strategy (e.g. target for physical) are
+# shown for both; the provider ignores the ones that do not apply. Value-based
+# conditional visibility is a UI concern (fieldOverrides), not expressible here.
+
+backup:
+  label: Backup configuration
+  components:
+    type:
+      uiType: select
+      path: parameters.type
+      fieldParams:
+        label: Backup type
+        defaultValue: logical
+        options:
+          - label: Logical (mariadb-dump)
+            value: logical
+          - label: Physical (mariadb-backup)
+            value: physical
+    compression:
+      uiType: select
+      path: parameters.compression
+      fieldParams:
+        label: Compression
+        defaultValue: none
+        options:
+          - label: None
+            value: none
+          - label: gzip
+            value: gzip
+          - label: bzip2
+            value: bzip2
+    target:
+      uiType: select
+      path: parameters.target
+      fieldParams:
+        label: Target pod (physical only)
+        options:
+          - label: Prefer replica
+            value: PreferReplica
+          - label: Replica only
+            value: Replica
+  componentsOrder:
+    - type
+    - compression
+    - target
