@@ -81,7 +81,7 @@ spec:
                 placeholder: |
                   [mariadb]
                   max_connections=100
-              path: spec.components.engine.config
+              path: spec.components.engine.parameters.configuration
               uiType: text
             externalAccess:
               fieldParams:
@@ -284,7 +284,7 @@ spec:
                 placeholder: |
                   [mariadb]
                   max_connections=100
-              path: spec.components.engine.config
+              path: spec.components.engine.parameters.configuration
               uiType: text
             externalAccess:
               fieldParams:

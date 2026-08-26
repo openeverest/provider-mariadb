@@ -173,7 +173,7 @@ ui:
                 value: "NodePort"
         configuration:
           uiType: text
-          path: spec.components.engine.config
+          path: spec.components.engine.parameters.configuration
           fieldParams:
             label: "Engine configuration (my.cnf)"
             placeholder: |
