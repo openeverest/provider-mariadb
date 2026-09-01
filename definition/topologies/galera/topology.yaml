@@ -107,11 +107,16 @@ ui:
       description: "Expose database metrics and integrate them with a Prometheus stack."
       components:
         enabled:
-          uiType: toggle
+          uiType: select
           path: spec.components.monitoring.parameters.enabled
           fieldParams:
             label: "Enable metrics"
-            defaultValue: false
+            defaultValue: "false"
+            options:
+              - label: "Disabled"
+                value: "false"
+              - label: "Enabled"
+                value: "true"
       componentsOrder:
         - enabled
 
