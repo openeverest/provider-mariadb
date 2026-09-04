@@ -1,7 +1,7 @@
 # Example Instance with pod anti-affinity and node affinity.
 #
 # The engine component accepts a standard Kubernetes affinity under
-# `spec.components.engine.affinity`. The provider maps it onto the
+# `spec.components.engine.schedulingPolicy.affinity`. The provider maps it onto the
 # mariadb-operator's affinity configuration.
 #
 # Supported: `nodeAffinity` and `podAntiAffinity`.
@@ -24,24 +24,25 @@ spec:
           memory: 2G
       storage:
         size: 10Gi
-      affinity:
-        # Spread each MariaDB pod onto a different node for HA.
-        podAntiAffinity:
-          requiredDuringSchedulingIgnoredDuringExecution:
-            - topologyKey: kubernetes.io/hostname
-              labelSelector:
-                matchExpressions:
-                  - key: app.kubernetes.io/instance
-                    operator: In
-                    values:
-                      - mariadb-anti-affinity
-        # Prefer nodes labeled as SSD-backed.
-        nodeAffinity:
-          preferredDuringSchedulingIgnoredDuringExecution:
-            - weight: 10
-              preference:
-                matchExpressions:
-                  - key: disktype
-                    operator: In
-                    values:
-                      - ssd
+      schedulingPolicy:
+        affinity:
+          # Spread each MariaDB pod onto a different node for HA.
+          podAntiAffinity:
+            requiredDuringSchedulingIgnoredDuringExecution:
+              - topologyKey: kubernetes.io/hostname
+                labelSelector:
+                  matchExpressions:
+                    - key: app.kubernetes.io/instance
+                      operator: In
+                      values:
+                        - mariadb-anti-affinity
+          # Prefer nodes labeled as SSD-backed.
+          nodeAffinity:
+            preferredDuringSchedulingIgnoredDuringExecution:
+              - weight: 10
+                preference:
+                  matchExpressions:
+                    - key: disktype
+                      operator: In
+                      values:
+                        - ssd

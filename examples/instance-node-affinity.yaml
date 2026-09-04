@@ -5,7 +5,7 @@
 # rules ("<key> <operator> [<value>,<value>...]"; operator: In, NotIn, Exists,
 # DoesNotExist). The provider compiles all rules into a single required node
 # affinity term (AND). This is the form-friendly alternative to setting the full
-# `spec.components.engine.affinity.nodeAffinity` — the two are mutually exclusive.
+# `spec.components.engine.schedulingPolicy.affinity.nodeAffinity` — the two are mutually exclusive.
 apiVersion: core.openeverest.io/v1alpha1
 kind: Instance
 metadata:

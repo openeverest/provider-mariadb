@@ -26,6 +26,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 
+	commonv1alpha1 "github.com/openeverest/openeverest/v2/api/common/v1alpha1"
 	corev1alpha1 "github.com/openeverest/openeverest/v2/api/core/v1alpha1"
 	"github.com/openeverest/openeverest/v2/provider-runtime/controller"
 
@@ -143,9 +144,9 @@ func newEngineParamsContext(t *testing.T, params string, affinity *corev1.Affini
 	}
 
 	engine := corev1alpha1.ComponentSpec{
-		Name:     common.ComponentEngine,
-		Type:     common.ComponentTypeMariaDB,
-		Affinity: affinity,
+		Name:             common.ComponentEngine,
+		Type:             common.ComponentTypeMariaDB,
+		SchedulingPolicy: &commonv1alpha1.SchedulingPolicy{Affinity: affinity},
 	}
 	if params != "" {
 		engine.Parameters = &runtime.RawExtension{Raw: []byte(params)}
