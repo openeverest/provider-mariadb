@@ -102,8 +102,10 @@ func validateComponents(c *controller.Context) error {
 		return err
 	}
 
-	if err := validateAffinity(engine.Affinity); err != nil {
-		return err
+	if schedulingPolicy := engine.SchedulingPolicy; schedulingPolicy != nil {
+		if err := validateAffinity(schedulingPolicy.Affinity); err != nil {
+			return err
+		}
 	}
 
 	if err := validateNodeAffinity(c, engine); err != nil {
@@ -114,15 +116,18 @@ func validateComponents(c *controller.Context) error {
 }
 
 // validateNodeAffinity checks the engine's node-targeting parameter: it must parse and
-// must not be combined with a raw affinity.nodeAffinity (the two would conflict).
+// must not be combined with a raw schedulingPolicy.affinity.nodeAffinity
+// (the two would conflict).
 func validateNodeAffinity(c *controller.Context, engine corev1alpha1.ComponentSpec) error {
 	var params components.MariadbParameters
 	if !c.TryDecodeComponentParameters(engine, &params) || strings.TrimSpace(params.NodeAffinity) == "" {
 		return nil
 	}
-	if engine.Affinity != nil && engine.Affinity.NodeAffinity != nil {
+	if engine.SchedulingPolicy != nil &&
+		engine.SchedulingPolicy.Affinity != nil &&
+		engine.SchedulingPolicy.Affinity.NodeAffinity != nil {
 		return fmt.Errorf(
-			"spec.components.%s: set node targeting via either affinity.nodeAffinity or the nodeAffinity parameter, not both",
+			"spec.components.%s: set node targeting via either schedulingPolicy.affinity.nodeAffinity or the nodeAffinity parameter, not both",
 			common.ComponentEngine,
 		)
 	}

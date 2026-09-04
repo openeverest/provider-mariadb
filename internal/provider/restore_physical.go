@@ -73,7 +73,7 @@ func resolvePhysicalBootstrapFrom(c *controller.Context) (*mariadbv1alpha1.Boots
 			fmt.Sprintf("Waiting for source Backup %q to succeed", sourceBackup.Name))
 	}
 
-	sourceInstance := sourceBackup.Spec.InstanceRef.Name
+	sourceInstance := sourceBackup.Spec.Origin.InstanceRef.Name
 	// Read the physical backup files from the source Instance's prefix in the
 	// storage it was written to.
 	s3, err := buildOperatorS3(c, sourceBackup.Spec.StorageRef.Name, sourceInstance)

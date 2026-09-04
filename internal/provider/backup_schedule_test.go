@@ -181,7 +181,8 @@ func TestMirror(t *testing.T) {
 		require.NoError(t, err)
 		require.NotNil(t, got)
 		assert.Equal(t, "mdb-sched-abc-28900000", got.Name)
-		assert.Equal(t, "db", got.Spec.InstanceRef.Name)
+		require.NotNil(t, got.Spec.Origin.InstanceRef)
+		assert.Equal(t, "db", got.Spec.Origin.InstanceRef.Name)
 		assert.Equal(t, "s3", got.Spec.StorageRef.Name)
 		assert.Equal(t, "mariadb", got.Spec.ClassRef.Name)
 		assert.Equal(t, "daily", got.Spec.ScheduleName)
@@ -224,7 +225,10 @@ func TestSyncBackupScheduledRunReadsJob(t *testing.T) {
 	mirrored := &backupv1alpha1.Backup{
 		ObjectMeta: metav1.ObjectMeta{Name: "mdb-sched-abc-28900000", Namespace: "ns"},
 		Spec: backupv1alpha1.BackupSpec{
-			InstanceRef:  commonv1alpha1.ObjectRef{Name: "db"},
+			Origin: backupv1alpha1.BackupOrigin{
+				Type:        backupv1alpha1.BackupOriginTypeInstance,
+				InstanceRef: &commonv1alpha1.ObjectRef{Name: "db"},
+			},
 			ClassRef:     commonv1alpha1.ObjectRef{Name: "mariadb"},
 			StorageRef:   commonv1alpha1.ObjectRef{Name: "s3"},
 			ScheduleName: "daily",

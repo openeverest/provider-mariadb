@@ -31,7 +31,7 @@ Source of truth: `internal/provider/`, `definition/`.
 | **HA topologies (Galera/replication)** | ❌ | only `standalone` topology exists |
 | **Backups / restore / PITR** | ❌ | no `BackupProvider` implementation, no BackupClass |
 | **TLS / transport encryption** | ✅ | enabled by default; operator-managed CA is published in connection details |
-| **Anti-affinity / scheduling** | ❌ | `engine.Affinity` not mapped to the operator |
+| **Anti-affinity / scheduling** | ❌ | `engine.SchedulingPolicy.Affinity` not mapped to the operator |
 
 ### Requested capabilities → gap summary
 
@@ -44,7 +44,7 @@ Source of truth: `internal/provider/`, `definition/`.
 | Observability with Prometheus | done; optional enhancements | **P6** |
 | Transport encryption (TLS) | enabled by default + CA surfaced in connection details | **P3 (done)** |
 | Expose via LoadBalancer / NodePort | done for standalone; extend to HA services | **P2 / P6** |
-| Anti-affinity | map `engine.Affinity`, default-on for HA | **P1** |
+| Anti-affinity | map `engine.SchedulingPolicy.Affinity`, default-on for HA | **P1** |
 
 ---
 
@@ -52,7 +52,7 @@ Source of truth: `internal/provider/`, `definition/`.
 
 Small, self-contained, and a prerequisite for meaningful HA. Ship first. **✅ Done.**
 
-- The SDK already exposes `ComponentSpec.Affinity *corev1.Affinity`
+- The SDK already exposes `ComponentSpec.SchedulingPolicy.Affinity *corev1.Affinity`
   (`api/core/v1alpha1/instance_types.go`); the provider currently ignores it.
 - The operator exposes `spec.podTemplate.affinity` as `AffinityConfig`
   (`api/v1alpha1/base_types.go`), a **trimmed** affinity type that models only
@@ -61,7 +61,7 @@ Small, self-contained, and a prerequisite for meaningful HA. Ship first. **✅ D
 
 **Tasks**
 
-- [x] Map `engine.Affinity` (`corev1.Affinity`) onto `spec.affinity`
+- [x] Map `engine.SchedulingPolicy.Affinity` (`corev1.Affinity`) onto `spec.affinity`
       (`AffinityConfig`) in `SyncMariaDB` — `internal/provider/affinity.go`
       (`convertAffinity`), applied for both create and update paths.
 - [x] Reject `podAffinity` in `Validate` (`validateAffinity`) — the operator
