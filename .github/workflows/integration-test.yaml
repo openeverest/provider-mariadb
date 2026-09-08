@@ -33,8 +33,10 @@ permissions:
 
 env:
   IMG: provider-mariadb:ci
-  # Branch of openeverest/openeverest to build the platform from.
-  OPENEVEREST_BRANCH: main
+  # Ref of openeverest/openeverest to build the platform from. Pinned to the
+  # release tag matching the core version in go.mod; core main has a breaking
+  # Backup CRD change (spec.instanceRef moved under spec.origin).
+  OPENEVEREST_BRANCH: v2.0.0-dev.2
 
 jobs:
   run:
