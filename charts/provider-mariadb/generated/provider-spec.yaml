@@ -157,15 +157,10 @@ spec:
           components:
             enabled:
               fieldParams:
-                defaultValue: "false"
+                defaultValue: false
                 label: Enable metrics
-                options:
-                  - label: Disabled
-                    value: "false"
-                  - label: Enabled
-                    value: "true"
               path: spec.components.monitoring.parameters.enabled
-              uiType: select
+              uiType: toggle
           componentsOrder:
             - enabled
           description: Expose database metrics and integrate them with a Prometheus stack.
@@ -365,15 +360,10 @@ spec:
           components:
             enabled:
               fieldParams:
-                defaultValue: "false"
+                defaultValue: false
                 label: Enable metrics
-                options:
-                  - label: Disabled
-                    value: "false"
-                  - label: Enabled
-                    value: "true"
               path: spec.components.monitoring.parameters.enabled
-              uiType: select
+              uiType: toggle
           componentsOrder:
             - enabled
           description: Expose database metrics and integrate them with a Prometheus stack.
@@ -562,15 +552,10 @@ spec:
           components:
             enabled:
               fieldParams:
-                defaultValue: "false"
+                defaultValue: false
                 label: Enable metrics
-                options:
-                  - label: Disabled
-                    value: "false"
-                  - label: Enabled
-                    value: "true"
               path: spec.components.monitoring.parameters.enabled
-              uiType: select
+              uiType: toggle
           componentsOrder:
             - enabled
           description: Expose database metrics and integrate them with a Prometheus stack.
