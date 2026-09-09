@@ -74,10 +74,10 @@ Stateful workloads additionally report:
 |---|---|---|
 | Persistent storage | ✅ | `spec.components.engine.storage.size` |
 | Storage expansion | ✅ | when the StorageClass allows volume expansion |
-| Backups (on demand) | ❌ | planned |
-| Backups (scheduled) | ❌ | planned |
+| Backups (on demand) | ✅ | logical (`mariadb-dump`) or physical (`mariadb-backup`) to S3-compatible storage; strategy selected via the backup `type` parameter |
+| Backups (scheduled) | ✅ | cron schedules per storage via `spec.backup` |
+| Restore | ✅ | logical backups are restored in place; physical backups are restored by seeding a new Instance from `spec.dataSource` |
 | Point-in-time recovery | ❌ | planned |
-| Restore | ❌ | planned |
 
 ## Installation
 
@@ -86,7 +86,7 @@ The provider chart is published as an OCI artifact:
 ```bash
 helm install provider-mariadb \
   oci://ghcr.io/openeverest/charts/provider-mariadb \
-  --version 0.1.3 \
+  --version 0.1.4 \
   --namespace everest-system
 ```
 
@@ -96,7 +96,7 @@ helm install provider-mariadb \
 Upgrade and uninstall:
 
 ```bash
-helm upgrade provider-mariadb oci://ghcr.io/openeverest/charts/provider-mariadb --version 0.1.3
+helm upgrade provider-mariadb oci://ghcr.io/openeverest/charts/provider-mariadb --version 0.1.4
 helm uninstall provider-mariadb --namespace everest-system
 ```
 
@@ -164,6 +164,58 @@ spec:
 TLS can be explicitly disabled with `tls.enabled: false`. Galera deployments
 also encrypt state snapshot transfers by default; this can be changed with
 `tls.galeraSSTEnabled`. See [examples/instance-tls.yaml](examples/instance-tls.yaml).
+
+## Backups and restore
+
+Backups are driven natively by the operator to an S3-compatible object store —
+the provider never runs side-car Jobs. Two strategies are available, selected
+per backup via the `type` parameter:
+
+- **`logical`** — a `mariadb-dump` SQL dump, restored in place.
+- **`physical`** — a `mariadb-backup` data-directory snapshot, restored by
+  seeding a new Instance from `spec.dataSource` (in-place restore is not
+  supported by the engine for physical backups).
+
+Point-in-time recovery is not implemented yet.
+
+Enable backups on the Instance by registering a `BackupStorage` (a reference to
+your object store) under `spec.backup`, using the provider's `mariadb`
+`BackupClass`. Cron `schedules` are configured per storage:
+
+```yaml
+spec:
+  backup:
+    enabled: true
+    classRef:
+      name: mariadb
+    storages:
+      - storageRef:
+          name: my-s3-storage
+        schedules:
+          - name: daily
+            enabled: true
+            cron: "0 0 * * *"
+            retentionCopies: 7
+            parameters:
+              type: physical
+              compression: gzip
+```
+
+On-demand backups are taken by creating a `Backup` resource that targets the
+same storage and class. Restore a new Instance from an existing backup with
+`spec.dataSource`:
+
+```yaml
+spec:
+  dataSource:
+    type: Backup
+    backup:
+      backupRef:
+        name: my-backup
+```
+
+`spec.dataSource` is immutable once set and requires `spec.backup.enabled: true`
+with at least one storage so the provider can read the source backup.
 
 ## Topologies
 
