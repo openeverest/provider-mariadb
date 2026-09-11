@@ -28,8 +28,11 @@ supportedProviders:
 executionMode: ProviderManaged
 
 providerManaged:
-  # Point-in-time recovery is not supported yet.
-  supportsPITR: false
+  supportsPITR: true
+  limits:
+    # The mariadb-operator archives binary logs from the single primary of the
+    # asynchronous replication topology, so at most one storage may enable PITR.
+    maxPITREnabledStorages: 1
 
 parametersSchema:
   openAPIV3Schema: MariadbBackupParameters

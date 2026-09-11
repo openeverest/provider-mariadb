@@ -1,0 +1,192 @@
+---
+# Point-in-time recovery suite.
+#
+# End-to-end proof that PITR (async replication topology, a storage with
+# pitr.enabled) can seed a brand-new Instance recovered to the latest
+# archived point:
+#   1. Deploy MinIO (S3) and create the backup bucket.
+#   2. Provision a replication source MariaDB with PITR enabled; the provider
+#      reconciles a PointInTimeRecovery CR + base PhysicalBackup and turns on
+#      binary log archival (MariaDB.spec.pointInTimeRecoveryRef).
+#   3. Write a sentinel row.
+#   4. Wait for the base backup + binlog archival so the recovery window
+#      (instance.status.backup.storages[].pitr) becomes Available.
+#   5. Seed a new Instance via spec.dataSource type PointInTime (recoveryTarget
+#      latest); the provider wires MariaDB.spec.bootstrapFrom.pointInTimeRecoveryRef.
+#   6. Assert the recovered cluster comes up Ready and still holds the row.
+apiVersion: chainsaw.kyverno.io/v1alpha1
+kind: Test
+metadata:
+  name: pitr
+spec:
+  description: |
+    Point-in-time recovery of a replication source Instance: enable PITR, archive
+    binary logs to MinIO, then recover into a new Instance via spec.dataSource
+    (PointInTime, latest), verifying the data survives the round-trip.
+
+  catch:
+    - script:
+        content: kubectl -n $NAMESPACE get instance,mariadb,pointintimerecovery,physicalbackup,pods -o wide
+    - script:
+        content: kubectl -n $NAMESPACE get pointintimerecovery,physicalbackup,mariadb -o yaml
+    - script:
+        content: |
+          ns=$(kubectl get deploy -A -l app.kubernetes.io/name=provider-mariadb \
+            -o jsonpath='{.items[0].metadata.namespace}')
+          [ -n "$ns" ] && kubectl -n "$ns" logs -l app.kubernetes.io/name=provider-mariadb \
+            --all-containers --tail 200 || echo "provider deployment not found"
+
+  steps:
+    - name: provider-deployed
+      try:
+        - script:
+            content: |
+              set -eu
+              avail=$(kubectl get deploy -A -l app.kubernetes.io/name=provider-mariadb \
+                -o jsonpath='{.items[*].status.availableReplicas}')
+              echo "provider available replicas: ${avail:-0}"
+              echo "${avail}" | grep -q '[1-9]'
+
+    # Deploy the shared MinIO (idempotent) and ensure the backup bucket exists.
+    - name: setup-minio
+      timeouts:
+        exec: 4m
+      try:
+        - script:
+            content: |
+              set -eu
+              kubectl apply -f "${PROVIDER_ROOT_PATH}/dev/resources/minio.yaml"
+              kubectl -n minio rollout status deploy/minio --timeout=180s
+              kubectl -n minio run mc-mb --rm -i --restart=Never \
+                --image=minio/mc:latest --command -- sh -c \
+                "mc alias set local http://minio.minio.svc.cluster.local:9000 minioadmin minioadmin && (mc mb local/backups || true)"
+
+    - name: backup-storage
+      try:
+        - apply:
+            file: 10-backupstorage.yaml
+
+    - name: source-instance
+      try:
+        - apply:
+            file: 20-source-instance.yaml
+        - assert:
+            file: 20-assert.yaml
+
+    - name: source-running
+      timeouts:
+        assert: 10m
+      try:
+        - assert:
+            file: 21-assert.yaml
+
+    # The provider wired PITR: CR, base backup and the MariaDB reference.
+    - name: pitr-configured
+      timeouts:
+        assert: 5m
+      try:
+        - assert:
+            file: 30-assert.yaml
+
+    # Write a sentinel row that must survive recovery.
+    - name: seed-data
+      timeouts:
+        exec: 3m
+      try:
+        - script:
+            content: |
+              set -eu
+              kubectl -n "$NAMESPACE" run mariadb-seed \
+                --rm -i --restart=Never \
+                --image=mariadb:11.4 \
+                --overrides='{
+                  "spec": {
+                    "containers": [{
+                      "name": "mariadb-seed",
+                      "image": "mariadb:11.4",
+                      "command": ["sh", "-c"],
+                      "args": ["set -eu; mariadb -h \"$DB_HOST\" -P \"$DB_PORT\" -u \"$DB_USER\" --ssl-ca=/tls/ca.crt -e \"CREATE TABLE IF NOT EXISTS everest.pitr_probe (id INT PRIMARY KEY); INSERT INTO everest.pitr_probe (id) VALUES (42) ON DUPLICATE KEY UPDATE id=id; FLUSH BINARY LOGS;\"; echo seeded"],
+                      "env": [
+                        {"name": "DB_HOST", "valueFrom": {"secretKeyRef": {"name": "pitr-source-conn", "key": "host"}}},
+                        {"name": "DB_PORT", "valueFrom": {"secretKeyRef": {"name": "pitr-source-conn", "key": "port"}}},
+                        {"name": "DB_USER", "valueFrom": {"secretKeyRef": {"name": "pitr-source-conn", "key": "username"}}},
+                        {"name": "MYSQL_PWD", "valueFrom": {"secretKeyRef": {"name": "pitr-source-conn", "key": "password"}}}
+                      ],
+                      "volumeMounts": [{"name": "tls", "mountPath": "/tls", "readOnly": true}]
+                    }],
+                    "volumes": [{"name": "tls", "secret": {"secretName": "pitr-source-conn", "items": [{"key": "ca.crt", "path": "ca.crt"}]}}]
+                  }
+                }'
+
+    # Wait for the base backup + binlog archival so a recovery window exists.
+    - name: recovery-window-available
+      timeouts:
+        assert: 12m
+      try:
+        - assert:
+            file: 40-assert.yaml
+
+    # Recover a brand-new Instance to the latest archived point.
+    - name: recover-instance
+      try:
+        - apply:
+            file: 50-restore-instance.yaml
+        - assert:
+            file: 50-assert.yaml
+
+    - name: recovered-running
+      timeouts:
+        assert: 10m
+      try:
+        - assert:
+            file: 51-assert.yaml
+
+    # The sentinel row must be present in the recovered cluster.
+    - name: verify-data
+      timeouts:
+        exec: 3m
+      try:
+        - script:
+            content: |
+              set -eu
+              kubectl -n "$NAMESPACE" run mariadb-verify \
+                --rm -i --restart=Never \
+                --image=mariadb:11.4 \
+                --overrides='{
+                  "spec": {
+                    "containers": [{
+                      "name": "mariadb-verify",
+                      "image": "mariadb:11.4",
+                      "command": ["sh", "-c"],
+                      "args": ["set -eu; val=$(mariadb -h \"$DB_HOST\" -P \"$DB_PORT\" -u \"$DB_USER\" --ssl-ca=/tls/ca.crt -Nse \"SELECT id FROM everest.pitr_probe WHERE id=42;\"); test \"$val\" = \"42\"; echo \"pitr probe row present: $val\""],
+                      "env": [
+                        {"name": "DB_HOST", "valueFrom": {"secretKeyRef": {"name": "pitr-restored-conn", "key": "host"}}},
+                        {"name": "DB_PORT", "valueFrom": {"secretKeyRef": {"name": "pitr-restored-conn", "key": "port"}}},
+                        {"name": "DB_USER", "valueFrom": {"secretKeyRef": {"name": "pitr-restored-conn", "key": "username"}}},
+                        {"name": "MYSQL_PWD", "valueFrom": {"secretKeyRef": {"name": "pitr-restored-conn", "key": "password"}}}
+                      ],
+                      "volumeMounts": [{"name": "tls", "mountPath": "/tls", "readOnly": true}]
+                    }],
+                    "volumes": [{"name": "tls", "secret": {"secretName": "pitr-restored-conn", "items": [{"key": "ca.crt", "path": "ca.crt"}]}}]
+                  }
+                }'
+
+    - name: delete-instances
+      try:
+        - delete:
+            ref:
+              apiVersion: core.openeverest.io/v1alpha1
+              kind: Instance
+              name: pitr-restored
+        - delete:
+            ref:
+              apiVersion: core.openeverest.io/v1alpha1
+              kind: Instance
+              name: pitr-source
+        - wait:
+            apiVersion: k8s.mariadb.com/v1alpha1
+            kind: MariaDB
+            name: pitr-source
+            timeout: 3m
+            for:
+              deletion: {}

@@ -1,0 +1,13 @@
+# Once the base backup has completed and binary logs have been archived, the
+# provider publishes the recovery window on the Instance status.
+apiVersion: core.openeverest.io/v1alpha1
+kind: Instance
+metadata:
+  name: pitr-source
+status:
+  backup:
+    storages:
+      - name: minio-s3
+        pitr:
+          state: Available
+          (latestRestorableTime != ''): true

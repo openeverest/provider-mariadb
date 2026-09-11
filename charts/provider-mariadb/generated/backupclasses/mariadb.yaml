@@ -32,7 +32,9 @@ spec:
           type: string
       type: object
   providerManaged:
-    supportsPITR: false
+    limits:
+      maxPITREnabledStorages: 1
+    supportsPITR: true
   restoreParametersSchema:
     openAPIV3Schema:
       type: object

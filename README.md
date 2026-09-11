@@ -77,7 +77,7 @@ Stateful workloads additionally report:
 | Backups (on demand) | ✅ | logical (`mariadb-dump`) or physical (`mariadb-backup`) to S3-compatible storage; strategy selected via the backup `type` parameter |
 | Backups (scheduled) | ✅ | cron schedules per storage via `spec.backup` |
 | Restore | ✅ | logical backups are restored in place; physical backups are restored by seeding a new Instance from `spec.dataSource` |
-| Point-in-time recovery | ❌ | planned |
+| Point-in-time recovery | ✅ | binary log archival on the `replication` topology; one storage may enable `pitr`; recover a new Instance to a target time via `spec.dataSource` (`PointInTime`) |
 
 ## Installation
 
@@ -176,7 +176,8 @@ per backup via the `type` parameter:
   seeding a new Instance from `spec.dataSource` (in-place restore is not
   supported by the engine for physical backups).
 
-Point-in-time recovery is not implemented yet.
+Point-in-time recovery builds on physical backups plus binary log archival; see
+[Point-in-time recovery](#point-in-time-recovery) below.
 
 Enable backups on the Instance by registering a `BackupStorage` (a reference to
 your object store) under `spec.backup`, using the provider's `mariadb`
@@ -216,6 +217,57 @@ spec:
 
 `spec.dataSource` is immutable once set and requires `spec.backup.enabled: true`
 with at least one storage so the provider can read the source backup.
+
+### Point-in-time recovery
+
+Point-in-time recovery (PITR) continuously archives the primary's binary logs to
+object storage on top of a full physical base backup, so an Instance can be
+recovered to any moment within the retained window. Binary log archival is only
+supported on the **`replication`** topology (Galera and standalone are not
+supported by the engine yet).
+
+Enable it by setting `pitr.enabled` on exactly one storage that also declares a
+physical backup schedule (which drives the base backup); the provider reconciles
+a `PointInTimeRecovery` object and turns on archival:
+
+```yaml
+spec:
+  topology:
+    type: replication
+  backup:
+    enabled: true
+    classRef:
+      name: mariadb
+    storages:
+      - storageRef:
+          name: my-s3-storage
+        pitr:
+          enabled: true
+        schedules:
+          - name: base
+            enabled: true
+            cron: "0 * * * *"
+            parameters:
+              type: physical
+```
+
+The recovery window is published on `status.backup.storages[].pitr`. Recover a
+new Instance to a target time (or the latest archived point) via
+`spec.dataSource`:
+
+```yaml
+spec:
+  dataSource:
+    type: PointInTime
+    pointInTime:
+      source:
+        instanceRef:
+          name: my-source-instance
+        storageRef:
+          name: my-s3-storage
+      recoveryTarget: date   # or "latest"
+      date: 2026-02-20T18:00:04Z
+```
 
 ## Topologies
 

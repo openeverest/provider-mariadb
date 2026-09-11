@@ -57,6 +57,37 @@ func ValidateMariaDB(c *controller.Context) error {
 		return fmt.Errorf("TLS validation: %w", err)
 	}
 
+	if err := validatePITR(c); err != nil {
+		l.Error(err, "PITR validation failed", "name", c.Name())
+		return fmt.Errorf("PITR validation: %w", err)
+	}
+
+	return nil
+}
+
+// validatePITR enforces the constraints of point-in-time recovery: the
+// mariadb-operator archives binary logs from the single primary of the
+// asynchronous replication topology, so PITR requires that topology, at most one
+// PITR-enabled storage, and a physical backup schedule on that storage to serve
+// as the full base backup.
+func validatePITR(c *controller.Context) error {
+	storage, err := pitrEnabledStorage(c.Instance().Spec.Backup)
+	if err != nil {
+		return err
+	}
+	if storage == nil {
+		return nil
+	}
+	if normalizeTopology(c.Instance().GetTopologyType()) != definition.TopologyTypeReplication {
+		return fmt.Errorf(
+			"point-in-time recovery is only supported on the %q topology; storage %q has pitr.enabled=true",
+			definition.TopologyTypeReplication,
+			storage.StorageRef.Name,
+		)
+	}
+	if _, err := firstPhysicalSchedule(storage); err != nil {
+		return err
+	}
 	return nil
 }
 

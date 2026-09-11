@@ -59,6 +59,9 @@ func New() *MariaDBProvider {
 				// Re-enqueue the Instance when its owned MariaDB CR changes
 				// (e.g., operator updates status after reconciliation).
 				controller.WatchOwned(&mariadbv1alpha1.MariaDB{}),
+				// Re-enqueue when the PITR CR status changes so the recovery
+				// window surfaced on the Instance stays current.
+				controller.WatchOwned(&mariadbv1alpha1.PointInTimeRecovery{}),
 			},
 		},
 	}
@@ -76,6 +79,9 @@ func (p *MariaDBProvider) Sync(c *controller.Context) error {
 		return err
 	}
 	if err := SyncScheduledBackups(c); err != nil {
+		return err
+	}
+	if err := SyncPITR(c); err != nil {
 		return err
 	}
 	return syncPhysicalDataSourceStatus(c)

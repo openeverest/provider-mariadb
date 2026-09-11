@@ -1,0 +1,14 @@
+# The point-in-time-recovered cluster comes up Ready with its own connection
+# Secret carrying the (source-derived) credentials.
+apiVersion: core.openeverest.io/v1alpha1
+kind: Instance
+metadata:
+  name: pitr-restored
+status:
+  phase: Ready
+---
+apiVersion: v1
+kind: Secret
+metadata:
+  name: pitr-restored-conn
+(base64_decode(data.password) != ''): true
