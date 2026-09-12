@@ -57,9 +57,16 @@ spec:
               set -eu
               kubectl apply -f "${PROVIDER_ROOT_PATH}/dev/resources/minio.yaml"
               kubectl -n minio rollout status deploy/minio --timeout=180s
-              kubectl -n minio run mc-mb --rm -i --restart=Never \
-                --image=minio/mc:latest --command -- sh -c \
-                "mc alias set local http://minio.minio.svc.cluster.local:9000 minioadmin minioadmin && (mc mb local/backups || true)"
+              # Create the bucket the BackupStorage points at (idempotent). Run a
+              # one-shot pod without stdin attach: `kubectl run -i --rm` can
+              # spuriously report "timed out waiting for the condition" when the
+              # pod completes before the attach connects.
+              kubectl -n minio delete pod mc-mb --ignore-not-found
+              kubectl -n minio run mc-mb --image=minio/mc:latest --restart=Never --command -- \
+                sh -c "mc alias set local http://minio.minio.svc.cluster.local:9000 minioadmin minioadmin && (mc mb local/backups || true)"
+              kubectl -n minio wait --for=jsonpath='{.status.phase}'=Succeeded pod/mc-mb --timeout=120s
+              kubectl -n minio logs mc-mb || true
+              kubectl -n minio delete pod mc-mb --ignore-not-found
 
     - name: backup-storage
       try:
