@@ -102,12 +102,11 @@ spec:
         - assert:
             file: 30-assert.yaml
 
-    # Write a sentinel row that must survive recovery. Enabling PITR set
-    # MariaDB.spec.pointInTimeRecoveryRef, which reconfigures binary logs and
-    # triggers a rolling update after the cluster first became Ready, so retry
-    # the write until the primary is writable again. Success keys on the
-    # "seeded" marker so a `kubectl run -i` attach race is not mistaken for a
-    # failure.
+    # Write a sentinel row that must survive recovery. Enabling PITR triggers a
+    # rolling update, and connecting to the replication primary as the everest
+    # user is unreliable, so write as root via the primary pod's local socket
+    # (root's password comes from the instance's own root Secret). Retry to ride
+    # out the rollout; FLUSH BINARY LOGS forces the write into an archived binlog.
     - name: seed-data
       timeouts:
         exec: 12m
@@ -115,32 +114,19 @@ spec:
         - script:
             content: |
               set -eu
+              rootpw=$(kubectl -n "$NAMESPACE" get secret everest-secrets-pitr-source-root \
+                -o jsonpath='{.data.root-password}' | base64 -d)
               ok=0
               for attempt in $(seq 1 40); do
-                out=$(kubectl -n "$NAMESPACE" run "mariadb-seed-${attempt}" \
-                  --rm -i --restart=Never \
-                  --image=mariadb:11.4 \
-                  --overrides='{
-                    "spec": {
-                      "containers": [{
-                        "name": "mariadb-seed",
-                        "image": "mariadb:11.4",
-                        "command": ["sh", "-c"],
-                        "args": ["set -eu; mariadb -h \"$DB_HOST\" -P \"$DB_PORT\" -u \"$DB_USER\" --ssl-ca=/tls/ca.crt -e \"CREATE TABLE IF NOT EXISTS everest.pitr_probe (id INT PRIMARY KEY); INSERT INTO everest.pitr_probe (id) VALUES (42) ON DUPLICATE KEY UPDATE id=id; FLUSH BINARY LOGS;\"; echo seeded"],
-                        "env": [
-                          {"name": "DB_HOST", "valueFrom": {"secretKeyRef": {"name": "pitr-source-conn", "key": "host"}}},
-                          {"name": "DB_PORT", "valueFrom": {"secretKeyRef": {"name": "pitr-source-conn", "key": "port"}}},
-                          {"name": "DB_USER", "valueFrom": {"secretKeyRef": {"name": "pitr-source-conn", "key": "username"}}},
-                          {"name": "MYSQL_PWD", "valueFrom": {"secretKeyRef": {"name": "pitr-source-conn", "key": "password"}}}
-                        ],
-                        "volumeMounts": [{"name": "tls", "mountPath": "/tls", "readOnly": true}]
-                      }],
-                      "volumes": [{"name": "tls", "secret": {"secretName": "pitr-source-conn", "items": [{"key": "ca.crt", "path": "ca.crt"}]}}]
-                    }
-                  }' 2>&1 || true)
-                echo "$out"
-                if echo "$out" | grep -q seeded; then ok=1; break; fi
-                echo "seed attempt ${attempt} failed (cluster may be mid-rollout); retrying in 15s..."
+                primary=$(kubectl -n "$NAMESPACE" get pod -l 'k8s.mariadb.com/role=primary' \
+                  -o jsonpath='{.items[0].metadata.name}' 2>/dev/null || true)
+                if [ -n "$primary" ] && kubectl -n "$NAMESPACE" exec "$primary" -c mariadb -- \
+                  env MYSQL_PWD="$rootpw" mariadb -u root -e \
+                  "CREATE TABLE IF NOT EXISTS everest.pitr_probe (id INT PRIMARY KEY); INSERT INTO everest.pitr_probe (id) VALUES (42) ON DUPLICATE KEY UPDATE id=id; FLUSH BINARY LOGS;"; then
+                  echo "seeded via ${primary}"
+                  ok=1; break
+                fi
+                echo "seed attempt ${attempt} failed (primary not ready?); retrying in 15s..."
                 sleep 15
               done
               [ "$ok" = 1 ]
@@ -168,10 +154,9 @@ spec:
         - assert:
             file: 51-assert.yaml
 
-    # The sentinel row must be present in the recovered cluster. Retry to ride
-    # out transient connection blips just after the cluster reports Ready;
-    # success keys on the probe marker rather than the `kubectl run -i` exit
-    # code (attach race).
+    # The sentinel row must be present in the recovered cluster. Read it as root
+    # via the restored pod's local socket (the provider copied the source's root
+    # Secret onto the restored instance). Retry to ride out any post-Ready blip.
     - name: verify-data
       timeouts:
         exec: 5m
@@ -179,32 +164,19 @@ spec:
         - script:
             content: |
               set -eu
+              rootpw=$(kubectl -n "$NAMESPACE" get secret everest-secrets-pitr-restored-root \
+                -o jsonpath='{.data.root-password}' | base64 -d)
               ok=0
               for attempt in $(seq 1 12); do
-                out=$(kubectl -n "$NAMESPACE" run "mariadb-verify-${attempt}" \
-                  --rm -i --restart=Never \
-                  --image=mariadb:11.4 \
-                  --overrides='{
-                    "spec": {
-                      "containers": [{
-                        "name": "mariadb-verify",
-                        "image": "mariadb:11.4",
-                        "command": ["sh", "-c"],
-                        "args": ["set -eu; val=$(mariadb -h \"$DB_HOST\" -P \"$DB_PORT\" -u \"$DB_USER\" --ssl-ca=/tls/ca.crt -Nse \"SELECT id FROM everest.pitr_probe WHERE id=42;\"); test \"$val\" = \"42\"; echo \"pitr probe row present: $val\""],
-                        "env": [
-                          {"name": "DB_HOST", "valueFrom": {"secretKeyRef": {"name": "pitr-restored-conn", "key": "host"}}},
-                          {"name": "DB_PORT", "valueFrom": {"secretKeyRef": {"name": "pitr-restored-conn", "key": "port"}}},
-                          {"name": "DB_USER", "valueFrom": {"secretKeyRef": {"name": "pitr-restored-conn", "key": "username"}}},
-                          {"name": "MYSQL_PWD", "valueFrom": {"secretKeyRef": {"name": "pitr-restored-conn", "key": "password"}}}
-                        ],
-                        "volumeMounts": [{"name": "tls", "mountPath": "/tls", "readOnly": true}]
-                      }],
-                      "volumes": [{"name": "tls", "secret": {"secretName": "pitr-restored-conn", "items": [{"key": "ca.crt", "path": "ca.crt"}]}}]
-                    }
-                  }' 2>&1 || true)
+                out=$(kubectl -n "$NAMESPACE" exec pitr-restored-0 -c mariadb -- \
+                  env MYSQL_PWD="$rootpw" mariadb -u root -Nse \
+                  "SELECT id FROM everest.pitr_probe WHERE id=42;" 2>&1 || true)
                 echo "$out"
-                if echo "$out" | grep -q "pitr probe row present"; then ok=1; break; fi
-                echo "verify attempt ${attempt} failed; retrying in 15s..."
+                if [ "$out" = "42" ]; then
+                  echo "pitr probe row present: $out"
+                  ok=1; break
+                fi
+                echo "verify attempt ${attempt}: got '${out}', retrying in 15s..."
                 sleep 15
               done
               [ "$ok" = 1 ]
