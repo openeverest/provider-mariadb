@@ -172,6 +172,10 @@ test-integration-replication: ## Run async replication HA integration tests.
 test-integration-backup: ## Run physical backup/restore integration tests (deploys MinIO).
 	. ./test/vars.sh && chainsaw test --config ./test/integration/.chainsaw.yaml ./test/integration/backup
 
+.PHONY: test-integration-pitr
+test-integration-pitr: ## Run point-in-time recovery integration tests (deploys MinIO).
+	. ./test/vars.sh && chainsaw test --config ./test/integration/.chainsaw.yaml ./test/integration/pitr
+
 .PHONY: load-image
 load-image: ## Import the provider image (IMG) into the k3d cluster.
 	k3d image import ${IMG} -c ${K3D_CLUSTER_NAME}

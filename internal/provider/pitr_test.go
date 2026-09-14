@@ -405,3 +405,37 @@ func TestBackupStorageStatuses(t *testing.T) {
 		assert.Nil(t, got)
 	})
 }
+
+// TestSyncRestoreRejectsPointInTimeInPlace locks in the seeding-only contract:
+// point-in-time recovery can only seed a new Instance via spec.dataSource, so an
+// in-place Restore CR of type PointInTime must be rejected without creating any
+// operator Restore.
+func TestSyncRestoreRejectsPointInTimeInPlace(t *testing.T) {
+	restore := &backupv1alpha1.Restore{
+		ObjectMeta: metav1.ObjectMeta{Name: "restore-pit", Namespace: "ns"},
+		Spec: backupv1alpha1.RestoreSpec{
+			InstanceRef: commonv1alpha1.ObjectRef{Name: "db"},
+			DataSource: backupv1alpha1.DataSource{
+				Type: backupv1alpha1.DataSourceTypePointInTime,
+				PointInTime: &backupv1alpha1.DataSourcePointInTime{
+					Source: backupv1alpha1.StreamSource{
+						InstanceRef: &commonv1alpha1.ObjectRef{Name: "src"},
+						StorageRef:  commonv1alpha1.ObjectRef{Name: "s3"},
+					},
+					RecoveryTarget: backupv1alpha1.RecoveryTargetLatest,
+				},
+			},
+		},
+	}
+	c := newContextWith(t, restore)
+
+	p := &MariaDBProvider{}
+	out, err := p.SyncRestore(c, restore)
+	require.NoError(t, err)
+	assert.Equal(t, backupv1alpha1.RestoreStateFailed, out.State)
+	assert.Contains(t, out.Message, "Unsupported dataSource type")
+
+	// No operator Restore must be created for an in-place PITR attempt.
+	assert.True(t, controller.IsNotFound(c.Get(&mariadbv1alpha1.Restore{}, "restore-pit")))
+}
+
