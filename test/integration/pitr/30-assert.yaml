@@ -1,0 +1,31 @@
+# PITR wiring: the provider reconciled a PointInTimeRecovery CR, a scheduled base
+# PhysicalBackup, and pointed the MariaDB at the PITR CR to enable binary log
+# archival. The base backup name is an opaque hash, so it is matched by its
+# provider-managed label rather than by name.
+apiVersion: k8s.mariadb.com/v1alpha1
+kind: MariaDB
+metadata:
+  name: pitr-source
+spec:
+  pointInTimeRecoveryRef:
+    name: pitr-source-pitr
+---
+apiVersion: k8s.mariadb.com/v1alpha1
+kind: PointInTimeRecovery
+metadata:
+  name: pitr-source-pitr
+spec:
+  (physicalBackupRef.name != ''): true
+  storage:
+    s3:
+      bucket: backups
+      prefix: pitr-source-binlog
+---
+apiVersion: k8s.mariadb.com/v1alpha1
+kind: PhysicalBackup
+metadata:
+  labels:
+    backup.provider-mariadb.openeverest.io/pitr-base: "true"
+spec:
+  schedule:
+    (cron != ''): true

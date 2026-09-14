@@ -1,0 +1,52 @@
+# Example Instance with point-in-time recovery (PITR) enabled.
+#
+# PITR continuously archives the primary's binary logs to object storage on top
+# of a full physical base backup, so the database can be recovered to any moment
+# within the retained window. It is only supported on the async replication
+# topology (Galera and standalone are not supported by the engine yet).
+#
+# Requirements:
+#   - topology.type: replication
+#   - exactly one storage with pitr.enabled: true
+#   - that storage must declare a physical backup schedule, which drives the
+#     full base backup the binary logs are replayed on top of.
+#
+# The recovery window is published on status.backup.storages[].pitr. To recover,
+# create a new Instance with spec.dataSource.type: PointInTime referencing this
+# Instance and storage (see the README).
+apiVersion: core.openeverest.io/v1alpha1
+kind: Instance
+metadata:
+  name: mariadb-pitr
+spec:
+  providerRef:
+    name: mariadb
+  topology:
+    type: replication
+  components:
+    engine:
+      type: mariadb
+      replicas: 3
+      resources:
+        requests:
+          cpu: 500m
+          memory: 2G
+      storage:
+        size: 10Gi
+  backup:
+    enabled: true
+    classRef:
+      name: mariadb
+    storages:
+      - storageRef:
+          name: my-s3-storage
+        pitr:
+          enabled: true
+        schedules:
+          - name: base
+            enabled: true
+            cron: "0 * * * *"
+            retentionCopies: 24
+            parameters:
+              type: physical
+              compression: gzip

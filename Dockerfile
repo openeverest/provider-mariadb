@@ -8,8 +8,15 @@ WORKDIR /workspace
 COPY go.mod go.mod
 COPY go.sum go.sum
 # Cache deps before building and copying source so that we don't need to re-download as much
-# and so that source changes don't invalidate our downloaded layer
-RUN go mod download
+# and so that source changes don't invalidate our downloaded layer. Retry to ride
+# out transient proxy.golang.org HTTP/2 stream errors on large module zips.
+RUN success=0; \
+    for attempt in 1 2 3 4 5; do \
+        if go mod download; then success=1; break; fi; \
+        echo "go mod download failed (attempt ${attempt}/5); retrying in 5s..."; \
+        sleep 5; \
+    done; \
+    [ "$success" = 1 ]
 
 # Copy the Go source (relies on .dockerignore to filter)
 COPY . .

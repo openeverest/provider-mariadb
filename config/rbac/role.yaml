@@ -124,6 +124,7 @@ rules:
   - backups
   - mariadbs
   - physicalbackups
+  - pointintimerecoveries
   - restores
   verbs:
   - create
@@ -139,6 +140,7 @@ rules:
   - backups/status
   - mariadbs/status
   - physicalbackups/status
+  - pointintimerecoveries/status
   - restores/status
   verbs:
   - get
