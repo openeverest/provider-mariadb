@@ -1,6 +1,5 @@
-# S3 BackupStorage (+ credentials Secret) for the suite, pointing at the shared
-# in-cluster SeaweedFS deployed in the `seaweedfs` namespace. Created in the ephemeral
-# test namespace so the provider resolves it alongside the Backup/Instance CRs.
+# S3 BackupStorage (+ credentials Secret) for the PITR suite, pointing at the
+# shared in-cluster SeaweedFS deployed in the `seaweedfs` namespace.
 apiVersion: v1
 kind: Secret
 metadata:

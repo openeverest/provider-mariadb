@@ -139,3 +139,12 @@ jobs:
       make_target: test-integration-backup
       suite: backup
     secrets: inherit
+
+  test-integration-pitr:
+    name: Integration / pitr
+    needs: [lint, build, verify]
+    uses: ./.github/workflows/integration-test.yaml
+    with:
+      make_target: test-integration-pitr
+      suite: pitr
+    secrets: inherit

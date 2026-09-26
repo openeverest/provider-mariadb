@@ -229,6 +229,15 @@ func SyncMariaDB(c *controller.Context) error {
 	// operator's generated certificate and CA references remain intact.
 	applyTLSOverlay(mariadbCR, tls)
 
+	// Point-in-time recovery: turn on binary log archival by referencing the
+	// PointInTimeRecovery CR once it exists, and clear the reference when PITR
+	// is disabled. The CR itself is reconciled by SyncPITR.
+	pitrRef, err := desiredPITRRef(c)
+	if err != nil {
+		return fmt.Errorf("resolve PITR reference: %w", err)
+	}
+	mariadbCR.Spec.PointInTimeRecoveryRef = pitrRef
+
 	if err := c.Apply(mariadbCR); err != nil {
 		return fmt.Errorf("apply MariaDB: %w", err)
 	}

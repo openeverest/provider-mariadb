@@ -31,6 +31,10 @@ package provider
 // +kubebuilder:rbac:groups=k8s.mariadb.com,resources=physicalbackups,verbs=get;list;watch;create;update;patch;delete
 // +kubebuilder:rbac:groups=k8s.mariadb.com,resources=physicalbackups/status,verbs=get
 
+// PointInTimeRecovery CRs — point-in-time recovery (binary log archival) support.
+// +kubebuilder:rbac:groups=k8s.mariadb.com,resources=pointintimerecoveries,verbs=get;list;watch;create;update;patch;delete
+// +kubebuilder:rbac:groups=k8s.mariadb.com,resources=pointintimerecoveries/status,verbs=get
+
 // =============================================================================
 // OPENEVEREST BACKUP RESOURCES
 // =============================================================================
