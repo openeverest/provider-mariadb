@@ -169,11 +169,11 @@ test-integration-replication: ## Run async replication HA integration tests.
 	. ./test/vars.sh && chainsaw test --config ./test/integration/.chainsaw.yaml ./test/integration/replication
 
 .PHONY: test-integration-backup
-test-integration-backup: ## Run physical backup/restore integration tests (deploys MinIO).
+test-integration-backup: ## Run physical backup/restore integration tests (deploys SeaweedFS).
 	. ./test/vars.sh && chainsaw test --config ./test/integration/.chainsaw.yaml ./test/integration/backup
 
 .PHONY: test-integration-pitr
-test-integration-pitr: ## Run point-in-time recovery integration tests (deploys MinIO).
+test-integration-pitr: ## Run point-in-time recovery integration tests (deploys SeaweedFS).
 	. ./test/vars.sh && chainsaw test --config ./test/integration/.chainsaw.yaml ./test/integration/pitr
 
 .PHONY: load-image

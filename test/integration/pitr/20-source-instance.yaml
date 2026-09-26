@@ -1,5 +1,5 @@
 # The source of point-in-time recovery: an async replication MariaDB with PITR
-# enabled on the MinIO storage. A physical backup schedule on that storage
+# enabled on the SeaweedFS storage. A physical backup schedule on that storage
 # serves as the full base backup; the provider reconciles a PointInTimeRecovery
 # CR and turns on binary log archival on the primary.
 apiVersion: core.openeverest.io/v1alpha1
@@ -30,7 +30,7 @@ spec:
       name: mariadb
     storages:
       - storageRef:
-          name: minio-s3
+          name: seaweedfs-s3
         pitr:
           enabled: true
         schedules:
