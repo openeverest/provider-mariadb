@@ -296,7 +296,10 @@ func (p *MariaDBProvider) Mirror(_ context.Context, _ client.Client, obj client.
 		return nil, nil
 	}
 	spec := backupv1alpha1.BackupSpec{
-		InstanceRef:  commonv1alpha1.ObjectRef{Name: instanceName},
+		Origin:       backupv1alpha1.BackupOrigin{
+			Type: backupv1alpha1.BackupOriginTypeInstance,
+			InstanceRef: &commonv1alpha1.ObjectRef{Name: instanceName},
+		},
 		ClassRef:     commonv1alpha1.ObjectRef{Name: className},
 		StorageRef:   commonv1alpha1.ObjectRef{Name: storageName},
 		ScheduleName: scheduleName,

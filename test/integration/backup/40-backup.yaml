@@ -4,8 +4,10 @@ kind: Backup
 metadata:
   name: physical-backup
 spec:
-  instanceRef:
-    name: physical-source
+  origin:
+    type: Instance
+    instanceRef:
+      name: physical-source
   classRef:
     name: mariadb
   storageRef:

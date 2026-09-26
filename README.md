@@ -65,7 +65,7 @@ provider itself is covered under [Installation](#installation).
 | High availability (replication) | ✅ | `spec.topology.type: replication` — async primary/replica cluster; at least 2 nodes (default 3) |
 | Custom configuration | ✅ | `my.cnf` via the engine component's `configuration` parameter |
 | Monitoring | ✅ | opt-in via the `monitoring` component; deploys `mysqld-exporter` and a Prometheus `ServiceMonitor` — requires the `ServiceMonitor` CRD (`monitoring.coreos.com`) |
-| Pod scheduling (affinity) | ✅ | `spec.components.engine.affinity` — `nodeAffinity` and `podAntiAffinity` are mapped to the operator; `podAffinity` is rejected |
+| Pod scheduling (affinity) | ✅ | `spec.components.engine.schedulingPolicy.affinity` — `nodeAffinity` and `podAntiAffinity` are mapped to the operator; `podAffinity` is rejected |
 | TLS | ✅ | enabled by default with operator-managed certificates; CA is published in the connection Secret |
 
 Stateful workloads additionally report:

@@ -150,7 +150,12 @@ func SyncMariaDB(c *controller.Context) error {
 	// operator's trimmed AffinityConfig. Combines the raw affinity escape hatch,
 	// node-targeting rules, and — for HA topologies — a soft pod anti-affinity
 	// that spreads nodes without blocking scheduling.
-	affinity, err := buildAffinity(engine.Affinity, params.NodeAffinity, ha, c.Name())
+	var engineAffinity *corev1.Affinity
+	if engine.SchedulingPolicy != nil {
+		engineAffinity = engine.SchedulingPolicy.Affinity
+	}
+
+	affinity, err := buildAffinity(engineAffinity, params.NodeAffinity, ha, c.Name())
 	if err != nil {
 		return fmt.Errorf("build affinity: %w", err)
 	}
