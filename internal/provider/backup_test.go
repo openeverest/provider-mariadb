@@ -228,8 +228,11 @@ func TestSyncBackup(t *testing.T) {
 	sdkBackup := &backupv1alpha1.Backup{
 		ObjectMeta: metav1.ObjectMeta{Name: "backup-1", Namespace: "ns"},
 		Spec: backupv1alpha1.BackupSpec{
-			InstanceRef: commonv1alpha1.ObjectRef{Name: "db"},
-			StorageRef:  commonv1alpha1.ObjectRef{Name: "s3"},
+			Origin: backupv1alpha1.BackupOrigin{
+				Type:        backupv1alpha1.BackupOriginTypeInstance,
+				InstanceRef: &commonv1alpha1.ObjectRef{Name: "db"},
+			},
+			StorageRef: commonv1alpha1.ObjectRef{Name: "s3"},
 			Parameters: &runtime.RawExtension{
 				Raw: []byte(`{"compression":"gzip","databases":["app"],"ignoreGlobalPriv":true}`),
 			},
@@ -279,8 +282,11 @@ func TestSyncBackupDoesNotMutateExistingSpec(t *testing.T) {
 	sdkBackup := &backupv1alpha1.Backup{
 		ObjectMeta: metav1.ObjectMeta{Name: "backup-1", Namespace: "ns"},
 		Spec: backupv1alpha1.BackupSpec{
-			InstanceRef: commonv1alpha1.ObjectRef{Name: "db"},
-			StorageRef:  commonv1alpha1.ObjectRef{Name: "s3"},
+			Origin: backupv1alpha1.BackupOrigin{
+				Type:        backupv1alpha1.BackupOriginTypeInstance,
+				InstanceRef: &commonv1alpha1.ObjectRef{Name: "db"},
+			},
+			StorageRef: commonv1alpha1.ObjectRef{Name: "s3"},
 		},
 	}
 	c := newContextWith(t, mdb, s3BackupStorage("s3", "https://new.example.com:9000"), sdkBackup, existing)
@@ -299,8 +305,11 @@ func TestSyncBackupPendingWithoutMariaDB(t *testing.T) {
 	sdkBackup := &backupv1alpha1.Backup{
 		ObjectMeta: metav1.ObjectMeta{Name: "backup-1", Namespace: "ns"},
 		Spec: backupv1alpha1.BackupSpec{
-			InstanceRef: commonv1alpha1.ObjectRef{Name: "db"},
-			StorageRef:  commonv1alpha1.ObjectRef{Name: "s3"},
+			Origin:     backupv1alpha1.BackupOrigin{
+				Type:        backupv1alpha1.BackupOriginTypeInstance,
+				InstanceRef: &commonv1alpha1.ObjectRef{Name: "db"},
+			},
+			StorageRef: commonv1alpha1.ObjectRef{Name: "s3"},
 		},
 	}
 	c := newContextWith(t, s3BackupStorage("s3", "https://minio.example.com:9000"), sdkBackup)

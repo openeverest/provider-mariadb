@@ -62,7 +62,7 @@ func validateAffinity(a *corev1.Affinity) error {
 	}
 	if a.PodAffinity != nil {
 		return fmt.Errorf(
-			"spec.components.%s.affinity.podAffinity is not supported by the MariaDB operator; "+
+			"spec.components.%s.schedulingPolicy.affinity.podAffinity is not supported by the MariaDB operator; "+
 				"only nodeAffinity and podAntiAffinity are supported",
 			common.ComponentEngine,
 		)

@@ -37,10 +37,13 @@ func physicalBackup(name string) *backupv1alpha1.Backup {
 	return &backupv1alpha1.Backup{
 		ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: "ns"},
 		Spec: backupv1alpha1.BackupSpec{
-			InstanceRef: commonv1alpha1.ObjectRef{Name: "db"},
-			StorageRef:  commonv1alpha1.ObjectRef{Name: "s3"},
-			ClassRef:    commonv1alpha1.ObjectRef{Name: "mariadb"},
-			Parameters:  &runtime.RawExtension{Raw: []byte(`{"type":"physical"}`)},
+			Origin:     backupv1alpha1.BackupOrigin{
+				Type:        backupv1alpha1.BackupOriginTypeInstance,
+				InstanceRef: &commonv1alpha1.ObjectRef{Name: "db"},
+			},
+			StorageRef: commonv1alpha1.ObjectRef{Name: "s3"},
+			ClassRef:   commonv1alpha1.ObjectRef{Name: "mariadb"},
+			Parameters: &runtime.RawExtension{Raw: []byte(`{"type":"physical"}`)},
 		},
 	}
 }
@@ -147,7 +150,8 @@ func TestResolvePhysicalBootstrapFrom(t *testing.T) {
 
 	t.Run("waits for a source backup that has not succeeded", func(t *testing.T) {
 		source := physicalBackup("backup-1")
-		source.Spec.InstanceRef = commonv1alpha1.ObjectRef{Name: "source-db"}
+		source.Spec.Origin.Type = backupv1alpha1.BackupOriginTypeInstance
+		source.Spec.Origin.InstanceRef = &commonv1alpha1.ObjectRef{Name: "source-db"}
 		source.Status.State = backupv1alpha1.BackupStateRunning
 		c := newContextForInstance(t, instanceSeededFrom("backup-1"),
 			source, s3BackupStorage("s3", "https://minio.example.com:9000"))
@@ -172,7 +176,8 @@ func TestResolvePhysicalBootstrapFrom(t *testing.T) {
 
 	t.Run("succeeded physical source builds bootstrapFrom pinned to the source", func(t *testing.T) {
 		source := physicalBackup("backup-1")
-		source.Spec.InstanceRef = commonv1alpha1.ObjectRef{Name: "source-db"}
+		source.Spec.Origin.Type = backupv1alpha1.BackupOriginTypeInstance
+		source.Spec.Origin.InstanceRef = &commonv1alpha1.ObjectRef{Name: "source-db"}
 		source.Status.State = backupv1alpha1.BackupStateSucceeded
 		source.Status.CompletedAt = &completedAt
 		c := newContextForInstance(t, instanceSeededFrom("backup-1"),

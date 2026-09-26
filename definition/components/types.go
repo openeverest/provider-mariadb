@@ -37,7 +37,7 @@ type MariadbParameters struct {
 	// one rule per line: "<key> <operator> [<value>,<value>...]" where operator is
 	// In, NotIn, Exists or DoesNotExist (In/NotIn require values; Exists/DoesNotExist
 	// take none). All rules are combined (AND) into a single required node affinity term.
-	// Mutually exclusive with spec.components.engine.affinity.nodeAffinity.
+	// Mutually exclusive with spec.components.engine.schedulingPolicy.affinity.nodeAffinity.
 	// +optional
 	NodeAffinity string `json:"nodeAffinity,omitempty"`
 	// TLS configures transport encryption for MariaDB. TLS is enabled by
