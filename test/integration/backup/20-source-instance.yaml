@@ -1,5 +1,5 @@
 # A single-node MariaDB Instance that is the source of a physical backup.
-# Backups are enabled so the physical backup is written to the MinIO storage.
+# Backups are enabled so the physical backup is written to the SeaweedFS storage.
 apiVersion: core.openeverest.io/v1alpha1
 kind: Instance
 metadata:
@@ -26,4 +26,4 @@ spec:
       name: mariadb
     storages:
       - storageRef:
-          name: minio-s3
+          name: seaweedfs-s3

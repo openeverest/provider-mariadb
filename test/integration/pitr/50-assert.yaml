@@ -1,0 +1,10 @@
+# The provider seeds the new cluster via point-in-time recovery: the MariaDB CR
+# references the source PointInTimeRecovery object in bootstrapFrom.
+apiVersion: k8s.mariadb.com/v1alpha1
+kind: MariaDB
+metadata:
+  name: pitr-restored
+spec:
+  bootstrapFrom:
+    pointInTimeRecoveryRef:
+      name: pitr-source-pitr

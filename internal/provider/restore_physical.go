@@ -20,6 +20,7 @@ import (
 	mariadbv1alpha1 "github.com/mariadb-operator/mariadb-operator/v26/api/v1alpha1"
 	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
 
 	backupv1alpha1 "github.com/openeverest/openeverest/v2/api/backup/v1alpha1"
@@ -28,21 +29,38 @@ import (
 )
 
 // resolvePhysicalBootstrapFrom builds the operator MariaDB.spec.bootstrapFrom
-// used to seed a brand-new Instance from a physical backup referenced by
-// spec.dataSource. It returns:
+// used to seed a brand-new Instance from spec.dataSource. It returns:
 //   - (nil, "", nil) when the Instance has no DataSource or the source is not a
-//     physical backup (logical seeding is handled elsewhere / unsupported here);
-//   - a WaitFor error while the source Backup is not yet resolvable or ready;
+//     physical/point-in-time source (logical seeding is handled elsewhere);
+//   - a WaitFor error while the source is not yet resolvable or ready;
 //   - a populated BootstrapFrom plus the source Instance name once the source
-//     physical backup has succeeded.
+//     is ready.
 //
-// Physical backups can only be restored into a fresh MariaDB via bootstrapFrom,
-// so this is only consulted when the MariaDB CR is first created.
+// Physical backups and point-in-time recovery can only be restored into a fresh
+// MariaDB via bootstrapFrom, so this is only consulted when the MariaDB CR is
+// first created.
 func resolvePhysicalBootstrapFrom(c *controller.Context) (*mariadbv1alpha1.BootstrapFrom, string, error) {
 	ds := c.Instance().Spec.DataSource
-	// Only backup-sourced seeding is supported for physical backups;
-	// point-in-time recovery is out of scope.
-	if ds == nil || ds.Type != backupv1alpha1.DataSourceTypeBackup || ds.Backup == nil {
+	if ds == nil {
+		return nil, "", nil
+	}
+	switch ds.Type {
+	case backupv1alpha1.DataSourceTypeBackup:
+		return resolveBackupBootstrapFrom(c, ds)
+	case backupv1alpha1.DataSourceTypePointInTime:
+		return resolvePointInTimeBootstrapFrom(c, ds)
+	default:
+		return nil, "", nil
+	}
+}
+
+// resolveBackupBootstrapFrom seeds from a physical Backup referenced by
+// spec.dataSource.backup.
+func resolveBackupBootstrapFrom(
+	c *controller.Context,
+	ds *backupv1alpha1.DataSource,
+) (*mariadbv1alpha1.BootstrapFrom, string, error) {
+	if ds.Backup == nil {
 		return nil, "", nil
 	}
 
@@ -88,6 +106,57 @@ func resolvePhysicalBootstrapFrom(c *controller.Context) (*mariadbv1alpha1.Boots
 	// closest backup at or before this time.
 	if sourceBackup.Status.CompletedAt != nil {
 		bootstrap.TargetRecoveryTime = sourceBackup.Status.CompletedAt
+	}
+	return bootstrap, sourceInstance, nil
+}
+
+// resolvePointInTimeBootstrapFrom seeds a new Instance by restoring the source
+// Instance's PITR base backup and replaying archived binary logs up to the
+// recovery target. The source Instance must be named explicitly (a new Instance
+// has no stream of its own) and must have PITR configured.
+func resolvePointInTimeBootstrapFrom(
+	c *controller.Context,
+	ds *backupv1alpha1.DataSource,
+) (*mariadbv1alpha1.BootstrapFrom, string, error) {
+	pit := ds.PointInTime
+	if pit == nil {
+		return nil, "", nil
+	}
+	if pit.Source.InstanceRef == nil || pit.Source.InstanceRef.Name == "" {
+		return nil, "", &controller.DataSourceConfigError{
+			Reason:  corev1alpha1.ReasonDataSourceFailed,
+			Message: "dataSource.pointInTime.source.instanceRef is required to seed a new Instance",
+		}
+	}
+	if pit.RecoveryTarget == backupv1alpha1.RecoveryTargetDate && pit.Date == nil {
+		return nil, "", &controller.DataSourceConfigError{
+			Reason:  corev1alpha1.ReasonDataSourceFailed,
+			Message: "dataSource.pointInTime.date is required when recoveryTarget is \"date\"",
+		}
+	}
+
+	sourceInstance := pit.Source.InstanceRef.Name
+	pitrName := pitrCRName(sourceInstance)
+	pitr := &mariadbv1alpha1.PointInTimeRecovery{}
+	if err := c.Get(pitr, pitrName); err != nil {
+		if apierrors.IsNotFound(err) {
+			return nil, "", controller.WaitFor(
+				fmt.Sprintf("Waiting for source PointInTimeRecovery %q", pitrName))
+		}
+		return nil, "", fmt.Errorf("get source PointInTimeRecovery: %w", err)
+	}
+
+	bootstrap := &mariadbv1alpha1.BootstrapFrom{
+		PointInTimeRecoveryRef: &mariadbv1alpha1.LocalObjectReference{Name: pitrName},
+		// PITR restores a physical base; mark it so the provider's data-source
+		// readiness logic recognizes the seeded cluster.
+		BackupContentType: mariadbv1alpha1.BackupContentTypePhysical,
+	}
+	// A "latest" target leaves TargetRecoveryTime unset so the operator replays
+	// up to the last recoverable time.
+	if pit.RecoveryTarget == backupv1alpha1.RecoveryTargetDate {
+		t := metav1.NewTime(pit.Date.UTC())
+		bootstrap.TargetRecoveryTime = &t
 	}
 	return bootstrap, sourceInstance, nil
 }

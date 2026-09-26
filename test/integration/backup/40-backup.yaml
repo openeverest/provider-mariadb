@@ -1,4 +1,4 @@
-# On-demand physical backup of the source Instance to the MinIO storage.
+# On-demand physical backup of the source Instance to the SeaweedFS storage.
 apiVersion: backup.openeverest.io/v1alpha1
 kind: Backup
 metadata:
@@ -11,6 +11,6 @@ spec:
   classRef:
     name: mariadb
   storageRef:
-    name: minio-s3
+    name: seaweedfs-s3
   parameters:
     type: physical

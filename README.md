@@ -74,10 +74,10 @@ Stateful workloads additionally report:
 |---|---|---|
 | Persistent storage | ✅ | `spec.components.engine.storage.size` |
 | Storage expansion | ✅ | when the StorageClass allows volume expansion |
-| Backups (on demand) | ❌ | planned |
-| Backups (scheduled) | ❌ | planned |
-| Point-in-time recovery | ❌ | planned |
-| Restore | ❌ | planned |
+| Backups (on demand) | ✅ | logical (`mariadb-dump`) or physical (`mariadb-backup`) to S3-compatible storage; strategy selected via the backup `type` parameter |
+| Backups (scheduled) | ✅ | cron schedules per storage via `spec.backup` |
+| Restore | ✅ | logical backups are restored in place; physical backups are restored by seeding a new Instance from `spec.dataSource` |
+| Point-in-time recovery | ✅ | binary log archival on the `replication` topology; one storage may enable `pitr`; recover a new Instance to a target time via `spec.dataSource` (`PointInTime`) |
 
 ## Installation
 
@@ -86,7 +86,7 @@ The provider chart is published as an OCI artifact:
 ```bash
 helm install provider-mariadb \
   oci://ghcr.io/openeverest/charts/provider-mariadb \
-  --version 0.1.3 \
+  --version 0.1.5 \
   --namespace everest-system
 ```
 
@@ -96,7 +96,7 @@ helm install provider-mariadb \
 Upgrade and uninstall:
 
 ```bash
-helm upgrade provider-mariadb oci://ghcr.io/openeverest/charts/provider-mariadb --version 0.1.3
+helm upgrade provider-mariadb oci://ghcr.io/openeverest/charts/provider-mariadb --version 0.1.5
 helm uninstall provider-mariadb --namespace everest-system
 ```
 
@@ -164,6 +164,110 @@ spec:
 TLS can be explicitly disabled with `tls.enabled: false`. Galera deployments
 also encrypt state snapshot transfers by default; this can be changed with
 `tls.galeraSSTEnabled`. See [examples/instance-tls.yaml](examples/instance-tls.yaml).
+
+## Backups and restore
+
+Backups are driven natively by the operator to an S3-compatible object store —
+the provider never runs side-car Jobs. Two strategies are available, selected
+per backup via the `type` parameter:
+
+- **`logical`** — a `mariadb-dump` SQL dump, restored in place.
+- **`physical`** — a `mariadb-backup` data-directory snapshot, restored by
+  seeding a new Instance from `spec.dataSource` (in-place restore is not
+  supported by the engine for physical backups).
+
+Point-in-time recovery builds on physical backups plus binary log archival; see
+[Point-in-time recovery](#point-in-time-recovery) below.
+
+Enable backups on the Instance by registering a `BackupStorage` (a reference to
+your object store) under `spec.backup`, using the provider's `mariadb`
+`BackupClass`. Cron `schedules` are configured per storage:
+
+```yaml
+spec:
+  backup:
+    enabled: true
+    classRef:
+      name: mariadb
+    storages:
+      - storageRef:
+          name: my-s3-storage
+        schedules:
+          - name: daily
+            enabled: true
+            cron: "0 0 * * *"
+            retentionCopies: 7
+            parameters:
+              type: physical
+              compression: gzip
+```
+
+On-demand backups are taken by creating a `Backup` resource that targets the
+same storage and class. Restore a new Instance from an existing backup with
+`spec.dataSource`:
+
+```yaml
+spec:
+  dataSource:
+    type: Backup
+    backup:
+      backupRef:
+        name: my-backup
+```
+
+`spec.dataSource` is immutable once set and requires `spec.backup.enabled: true`
+with at least one storage so the provider can read the source backup.
+
+### Point-in-time recovery
+
+Point-in-time recovery (PITR) continuously archives the primary's binary logs to
+object storage on top of a full physical base backup, so an Instance can be
+recovered to any moment within the retained window. Binary log archival is only
+supported on the **`replication`** topology (Galera and standalone are not
+supported by the engine yet).
+
+Enable it by setting `pitr.enabled` on exactly one storage that also declares a
+physical backup schedule (which drives the base backup); the provider reconciles
+a `PointInTimeRecovery` object and turns on archival:
+
+```yaml
+spec:
+  topology:
+    type: replication
+  backup:
+    enabled: true
+    classRef:
+      name: mariadb
+    storages:
+      - storageRef:
+          name: my-s3-storage
+        pitr:
+          enabled: true
+        schedules:
+          - name: base
+            enabled: true
+            cron: "0 * * * *"
+            parameters:
+              type: physical
+```
+
+The recovery window is published on `status.backup.storages[].pitr`. Recover a
+new Instance to a target time (or the latest archived point) via
+`spec.dataSource`:
+
+```yaml
+spec:
+  dataSource:
+    type: PointInTime
+    pointInTime:
+      source:
+        instanceRef:
+          name: my-source-instance
+        storageRef:
+          name: my-s3-storage
+      recoveryTarget: date   # or "latest"
+      date: 2026-02-20T18:00:04Z
+```
 
 ## Topologies
 
