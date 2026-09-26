@@ -17,7 +17,7 @@ spec:
         instanceRef:
           name: pitr-source
         storageRef:
-          name: minio-s3
+          name: seaweedfs-s3
       recoveryTarget: latest
   components:
     engine:
@@ -38,4 +38,4 @@ spec:
       name: mariadb
     storages:
       - storageRef:
-          name: minio-s3
+          name: seaweedfs-s3

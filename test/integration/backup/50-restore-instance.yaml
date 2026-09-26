@@ -33,4 +33,4 @@ spec:
       name: mariadb
     storages:
       - storageRef:
-          name: minio-s3
+          name: seaweedfs-s3
