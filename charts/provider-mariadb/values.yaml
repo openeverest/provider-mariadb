@@ -146,6 +146,44 @@ presets:
           storage:
             size: 10Gi
             # storageClass: ""  # Uncomment to pin a storage class
+  - name: replication
+    enabled: true
+    spec:
+      providerRef:
+        name: mariadb
+      version: "11.4"
+      topology:
+        type: replication
+      components:
+        engine:
+          # One primary plus two async replicas (topology minimum is 2).
+          replicas: 3
+          resources:
+            limits:
+              cpu: "1"
+              memory: 2Gi
+          storage:
+            size: 10Gi
+            # storageClass: ""  # Uncomment to pin a storage class
+  - name: galera
+    enabled: true
+    spec:
+      providerRef:
+        name: mariadb
+      version: "11.4"
+      topology:
+        type: galera
+      components:
+        engine:
+          # Galera requires an odd number of nodes (>= 3) to keep quorum.
+          replicas: 3
+          resources:
+            limits:
+              cpu: "1"
+              memory: 2Gi
+          storage:
+            size: 10Gi
+            # storageClass: ""  # Uncomment to pin a storage class
 
 # -- Additional environment variables to set on the provider container
 extraEnv: []
