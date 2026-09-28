@@ -20,6 +20,13 @@ apiVersion: k8s.mariadb.com/v1alpha1
 kind: MaxScale
 metadata:
   name: test-maxscale-maxscale
+spec:
+  # Disabling either leaves the cluster without a primary after a failure (#37).
+  monitor:
+    module: mariadbmon
+    params:
+      auto_failover: "true"
+      auto_rejoin: "true"
 status:
   (primaryServer != null): true
   (conditions[?type == 'Ready']):

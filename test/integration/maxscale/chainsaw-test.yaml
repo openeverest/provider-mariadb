@@ -91,6 +91,57 @@ spec:
                   }
                 }'
 
+    # Kill the primary Pod and require MaxScale to promote another server that
+    # accepts writes. A new primary left read-only by the operator (#37) fails
+    # the write loop below.
+    - name: primary-failover
+      timeouts:
+        exec: 10m
+        assert: 10m
+      try:
+        - script:
+            content: |
+              set -eu
+              mxs=test-maxscale-maxscale
+              old=$(kubectl -n "$NAMESPACE" get maxscale "$mxs" -o jsonpath='{.status.primaryServer}')
+              test -n "$old"
+              echo "deleting primary pod $old"
+              kubectl -n "$NAMESPACE" delete pod "$old" --wait=false
+
+              new=""
+              for _ in $(seq 1 60); do
+                new=$(kubectl -n "$NAMESPACE" get maxscale "$mxs" -o jsonpath='{.status.primaryServer}')
+                if [ -n "$new" ] && [ "$new" != "$old" ]; then break; fi
+                sleep 5
+              done
+              if [ -z "$new" ] || [ "$new" = "$old" ]; then
+                echo "FAIL: MaxScale did not promote a new primary (still '$new')" >&2
+                exit 1
+              fi
+              echo "new primary: $new"
+
+              kubectl -n "$NAMESPACE" run mariadb-maxscale-failover-check \
+                --rm -i --restart=Never \
+                --image=mariadb:12.3 \
+                --overrides='{
+                  "spec": {
+                    "containers": [{
+                      "name": "mariadb-maxscale-failover-check",
+                      "image": "mariadb:12.3",
+                      "command": ["sh", "-c"],
+                      "args": ["for i in $(seq 1 36); do mariadb -h \"$DB_HOST\" -P \"$DB_PORT\" -u \"$DB_USER\" -D everest -e \"REPLACE INTO t VALUES (2)\" && echo write-ok && exit 0; sleep 5; done; echo \"FAIL: no writable primary behind MaxScale\" >&2; exit 1"],
+                      "env": [
+                        {"name": "DB_HOST", "valueFrom": {"secretKeyRef": {"name": "test-maxscale-conn", "key": "host"}}},
+                        {"name": "DB_PORT", "valueFrom": {"secretKeyRef": {"name": "test-maxscale-conn", "key": "port"}}},
+                        {"name": "DB_USER", "valueFrom": {"secretKeyRef": {"name": "test-maxscale-conn", "key": "username"}}},
+                        {"name": "MYSQL_PWD", "valueFrom": {"secretKeyRef": {"name": "test-maxscale-conn", "key": "password"}}}
+                      ]
+                    }]
+                  }
+                }'
+        - assert:
+            file: 12-assert.yaml
+
     # Disabling the proxy removes MaxScale, hands failover back to the operator
     # and repoints the connection details at the primary Service.
     - name: disable-proxy
