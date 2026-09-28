@@ -3,18 +3,18 @@
 spec:
   componentTypes:
     mariadb:
+      defaultVersion: "12.3"
       versions:
         - image: mariadb:11.4
           version: "11.4"
         - image: mariadb:11.8
           version: "11.8"
-        - default: true
-          image: mariadb:12.3
+        - image: mariadb:12.3
           version: "12.3"
     mysqld-exporter:
+      defaultVersion: 0.15.1
       versions:
-        - default: true
-          image: prom/mysqld-exporter:v0.15.1
+        - image: prom/mysqld-exporter:v0.15.1
           version: 0.15.1
   components:
     engine:
@@ -57,6 +57,9 @@ spec:
               type: object
           type: object
       type: mysqld-exporter
+  defaultVersion: "12.3"
+  release:
+    version: 0.1.0
   topologies:
     galera:
       components:
@@ -77,6 +80,8 @@ spec:
     standalone:
       components:
         engine: {}
+        monitoring:
+          optional: true
   uiSchema:
     galera:
       sections:
@@ -294,7 +299,7 @@ spec:
                 placeholder: |
                   [mariadb]
                   max_connections=100
-              path: spec.components.engine.config
+              path: spec.components.engine.parameters.configuration
               uiType: text
             externalAccess:
               fieldParams:
@@ -678,5 +683,4 @@ spec:
     - components:
         engine: "12.3"
         monitoring: 0.15.1
-      default: true
       name: "12.3"
