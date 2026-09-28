@@ -1,9 +1,9 @@
 module github.com/openeverest/provider-mariadb
 
-go 1.26.4
+go 1.27.0
 
 require (
-	github.com/mariadb-operator/mariadb-operator/v26 v26.6.0
+	github.com/mariadb-operator/mariadb-operator/v26 v26.10.1
 	github.com/openeverest/openeverest/v2 v2.0.0-dev.3
 	github.com/robfig/cron/v3 v3.0.1
 	github.com/stretchr/testify v1.12.1
@@ -80,7 +80,7 @@ require (
 	github.com/hashicorp/go-version v1.9.0 // indirect
 	github.com/inconshreveable/mousetrap v1.1.0 // indirect
 	github.com/json-iterator/go v1.1.12 // indirect
-	github.com/klauspost/compress v1.19.0 // indirect
+	github.com/klauspost/compress v1.19.2 // indirect
 	github.com/klauspost/pgzip v1.2.6 // indirect
 	github.com/lucasb-eyer/go-colorful v1.4.0 // indirect
 	github.com/mattn/go-isatty v0.0.23 // indirect

@@ -234,6 +234,8 @@ func SyncMariaDB(c *controller.Context) error {
 	// operator's generated certificate and CA references remain intact.
 	applyTLSOverlay(mariadbCR, tls)
 
+	applyUpdateStrategyOverlay(mariadbCR)
+
 	// Point-in-time recovery: turn on binary log archival by referencing the
 	// PointInTimeRecovery CR once it exists, and clear the reference when PITR
 	// is disabled. The CR itself is reconciled by SyncPITR.
@@ -248,6 +250,15 @@ func SyncMariaDB(c *controller.Context) error {
 	}
 
 	return nil
+}
+
+// applyUpdateStrategyOverlay keeps the agent/init images in lockstep with the
+// operator bundled in the chart, and runs mariadb-upgrade on start so version
+// changes across MariaDB major releases migrate the system schema. Other
+// updateStrategy fields keep their operator defaults.
+func applyUpdateStrategyOverlay(mariadb *mariadbv1alpha1.MariaDB) {
+	mariadb.Spec.UpdateStrategy.AutoUpdateDataPlane = ptr.To(true)
+	mariadb.Spec.UpdateStrategy.MariaDBAutoUpgradeEnabled = ptr.To(true)
 }
 
 // buildInitialMariaDB constructs the MariaDB CR for first creation. Subsequent
