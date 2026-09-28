@@ -20,10 +20,10 @@ dependencies:
   # companion mariadb-operator-crds chart (condition: operator.crds.enabled).
   - name: mariadb-operator
     alias: operator
-    version: "26.6.0"
+    version: "26.10.1"
     repository: https://mariadb-operator.github.io/mariadb-operator
   - name: mariadb-operator-crds
     alias: operatorCrds
-    version: "26.6.0"
+    version: "26.10.1"
     repository: https://mariadb-operator.github.io/mariadb-operator
     condition: operatorCrds.enabled
