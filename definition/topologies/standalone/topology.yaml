@@ -6,6 +6,8 @@ config:
     engine:
       defaults:
         replicas: 1
+    monitoring:
+      optional: true
 
 ui:
   sections:

@@ -58,6 +58,8 @@ spec:
           type: object
       type: mysqld-exporter
   defaultVersion: "12.3"
+  release:
+    version: 0.1.0
   topologies:
     galera:
       components:
@@ -78,6 +80,8 @@ spec:
     standalone:
       components:
         engine: {}
+        monitoring:
+          optional: true
   uiSchema:
     galera:
       sections:
@@ -295,7 +299,7 @@ spec:
                 placeholder: |
                   [mariadb]
                   max_connections=100
-              path: spec.components.engine.config
+              path: spec.components.engine.parameters.configuration
               uiType: text
             externalAccess:
               fieldParams:
