@@ -91,9 +91,11 @@ spec:
                   }
                 }'
 
-    # Kill the primary Pod and require MaxScale to promote another server that
-    # accepts writes. A new primary left read-only by the operator (#37) fails
-    # the write loop below.
+    # Take the primary down for real and require MaxScale to promote another
+    # server that accepts writes. A new primary left read-only by the operator
+    # (#37) fails the write loop below. Cordoning keeps the recreated Pod Pending
+    # (its PVC is node-local); a plain delete restarts it faster than MaxScale's
+    # failure detection, so no failover would happen.
     - name: primary-failover
       timeouts:
         exec: 10m
@@ -105,7 +107,9 @@ spec:
               mxs=test-maxscale-maxscale
               old=$(kubectl -n "$NAMESPACE" get maxscale "$mxs" -o jsonpath='{.status.primaryServer}')
               test -n "$old"
-              echo "deleting primary pod $old"
+              node=$(kubectl -n "$NAMESPACE" get pod "$old" -o jsonpath='{.spec.nodeName}')
+              echo "cordoning $node and deleting primary pod $old"
+              kubectl cordon "$node"
               kubectl -n "$NAMESPACE" delete pod "$old" --wait=false
 
               new=""
@@ -139,8 +143,16 @@ spec:
                     }]
                   }
                 }'
+        # Let the old primary come back so it can rejoin as a replica.
+        - script:
+            content: |
+              kubectl get nodes --field-selector spec.unschedulable=true -o name | xargs -r kubectl uncordon
         - assert:
             file: 12-assert.yaml
+      finally:
+        - script:
+            content: |
+              kubectl get nodes --field-selector spec.unschedulable=true -o name | xargs -r kubectl uncordon
 
     # Disabling the proxy removes MaxScale, hands failover back to the operator
     # and repoints the connection details at the primary Service.
