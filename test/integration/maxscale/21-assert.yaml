@@ -1,0 +1,21 @@
+# Expected outcome of the disable-proxy step: the MariaDB no longer references
+# MaxScale and the connection details point back at the primary Service.
+apiVersion: core.openeverest.io/v1alpha1
+kind: Instance
+metadata:
+  name: test-maxscale
+status:
+  phase: Ready
+---
+apiVersion: k8s.mariadb.com/v1alpha1
+kind: MariaDB
+metadata:
+  name: test-maxscale
+spec:
+  (maxScaleRef == null): true
+---
+apiVersion: v1
+kind: Secret
+metadata:
+  name: test-maxscale-conn
+(contains(base64_decode(data.host), 'test-maxscale-primary')): true

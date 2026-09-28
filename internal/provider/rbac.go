@@ -35,6 +35,10 @@ package provider
 // +kubebuilder:rbac:groups=k8s.mariadb.com,resources=pointintimerecoveries,verbs=get;list;watch;create;update;patch;delete
 // +kubebuilder:rbac:groups=k8s.mariadb.com,resources=pointintimerecoveries/status,verbs=get
 
+// MaxScale CRs — proxy component.
+// +kubebuilder:rbac:groups=k8s.mariadb.com,resources=maxscales,verbs=get;list;watch;create;update;patch;delete
+// +kubebuilder:rbac:groups=k8s.mariadb.com,resources=maxscales/status,verbs=get
+
 // =============================================================================
 // OPENEVEREST BACKUP RESOURCES
 // =============================================================================

@@ -63,6 +63,7 @@ provider itself is covered under [Installation](#installation).
 | Version upgrades | ✅ | of the deployed MariaDB version — change `spec.version`; see [Versions](#versions) |
 | High availability (Galera) | ✅ | `spec.topology.type: galera` — multi-master cluster; odd node count (default 3) |
 | High availability (replication) | ✅ | `spec.topology.type: replication` — async primary/replica cluster; at least 2 nodes (default 3) |
+| Proxy / load balancing (MaxScale) | ✅ | opt-in via the `proxy` component on `galera` and `replication`; see [MaxScale proxy](#maxscale-proxy) |
 | Custom configuration | ✅ | `my.cnf` via the engine component's `configuration` parameter |
 | Monitoring | ✅ | opt-in via the `monitoring` component; deploys `mysqld-exporter` and a Prometheus `ServiceMonitor` — requires the `ServiceMonitor` CRD (`monitoring.coreos.com`) |
 | Pod scheduling (affinity) | ✅ | `spec.components.engine.schedulingPolicy.affinity` — `nodeAffinity` and `podAntiAffinity` are mapped to the operator; `podAffinity` is rejected |
@@ -164,6 +165,45 @@ spec:
 TLS can be explicitly disabled with `tls.enabled: false`. Galera deployments
 also encrypt state snapshot transfers by default; this can be changed with
 `tls.galeraSSTEnabled`. See [examples/instance-tls.yaml](examples/instance-tls.yaml).
+
+## MaxScale proxy
+
+The `galera` and `replication` topologies can be fronted by
+[MariaDB MaxScale](https://github.com/mariadb-operator/mariadb-operator/blob/main/docs/maxscale.md),
+which routes writes to the primary, balances reads across nodes and takes over
+primary failover from the operator. Enable it through the `proxy` component:
+
+```yaml
+spec:
+  topology:
+    type: replication
+  components:
+    proxy:
+      replicas: 2        # default
+      parameters:
+        enabled: true
+      service:
+        serviceType: LoadBalancer
+```
+
+While the proxy is enabled, the connection Secret points at the MaxScale
+Service (`<name>-maxscale`) with the same credentials. MaxScale terminates TLS
+only when the engine requires it (`tls.required: true`); the connection Secret
+then carries the MaxScale CA. Setting `enabled: false` removes MaxScale and hands
+failover back to the operator. See [examples/instance-maxscale.yaml](examples/instance-maxscale.yaml).
+
+> [!IMPORTANT]
+> MaxScale is licensed under the
+> [Business Source License](https://github.com/mariadb-corporation/MaxScale/blob/23.08/LICENSE.TXT).
+> Make sure you understand the implications before enabling it.
+
+> [!WARNING]
+> With the `replication` topology, MaxScale's monitor performs automatic failover
+> while the operator keeps reconciling replica roles. Under unlucky timing the
+> operator can reconfigure a node MaxScale has just promoted back to read-only,
+> leaving no writable primary ([#37](https://github.com/openeverest/provider-mariadb/issues/37)).
+> Alert on MaxScale reporting no server in `Master` state and keep a manual
+> recovery path (e.g. a switchover via `MaxScale.spec.primaryServer`).
 
 ## Backups and restore
 

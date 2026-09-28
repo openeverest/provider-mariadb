@@ -1,0 +1,44 @@
+# Example Instance with MariaDB MaxScale in front of a replication cluster.
+#
+# The proxy component deploys MaxScale (2 replicas by default), which routes
+# writes to the primary, balances reads across replicas and takes over primary
+# failover from the mariadb-operator. It is supported on the galera and
+# replication topologies.
+#
+# While the proxy is enabled, the connection details in the generated Secret
+# point at the MaxScale Service (<name>-maxscale). MaxScale authenticates
+# clients against the same MariaDB users, so the credentials are unchanged.
+# MaxScale only terminates TLS when the engine requires it (tls.required: true);
+# its CA is then published in the connection Secret instead of the MariaDB one.
+#
+# Disabling the proxy (enabled: false) removes MaxScale and hands failover back
+# to the mariadb-operator.
+apiVersion: core.openeverest.io/v1alpha1
+kind: Instance
+metadata:
+  name: mariadb-maxscale
+spec:
+  providerRef:
+    name: mariadb
+  topology:
+    type: replication
+  components:
+    engine:
+      type: mariadb
+      replicas: 3
+      resources:
+        requests:
+          cpu: 500m
+          memory: 2G
+      storage:
+        size: 10Gi
+    proxy:
+      replicas: 2
+      parameters:
+        enabled: true
+      resources:
+        requests:
+          cpu: 100m
+          memory: 256Mi
+      service:
+        serviceType: ClusterIP

@@ -62,6 +62,9 @@ func New() *MariaDBProvider {
 				// Re-enqueue when the PITR CR status changes so the recovery
 				// window surfaced on the Instance stays current.
 				controller.WatchOwned(&mariadbv1alpha1.PointInTimeRecovery{}),
+				// Re-enqueue when MaxScale changes so the MariaDB picks up its
+				// reference and the Instance status tracks proxy readiness.
+				controller.WatchOwned(&mariadbv1alpha1.MaxScale{}),
 			},
 		},
 	}
@@ -78,6 +81,9 @@ func (p *MariaDBProvider) Sync(c *controller.Context) error {
 	if err := SyncMariaDB(c); err != nil {
 		return err
 	}
+	if err := SyncMaxScale(c); err != nil {
+		return err
+	}
 	if err := SyncScheduledBackups(c); err != nil {
 		return err
 	}
@@ -92,7 +98,7 @@ func (p *MariaDBProvider) Status(c *controller.Context) (controller.Status, erro
 	return StatusMariaDB(c)
 }
 
-// Cleanup deletes the MariaDB CR when the Instance is deleted.
+// Cleanup deletes the MaxScale and MariaDB CRs when the Instance is deleted.
 // Owner references handle cascaded cleanup of child resources.
 func (p *MariaDBProvider) Cleanup(c *controller.Context) error {
 	return CleanupMariaDB(c)

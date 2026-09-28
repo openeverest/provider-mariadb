@@ -1,0 +1,38 @@
+# Expected outcome of the cluster-running step: the MariaDB delegates primary
+# failover to MaxScale, MaxScale reports a primary server, and the connection
+# details published by the runtime point at the MaxScale Service.
+apiVersion: core.openeverest.io/v1alpha1
+kind: Instance
+metadata:
+  name: test-maxscale
+status:
+  phase: Ready
+---
+apiVersion: k8s.mariadb.com/v1alpha1
+kind: MariaDB
+metadata:
+  name: test-maxscale
+spec:
+  maxScaleRef:
+    name: test-maxscale-maxscale
+---
+apiVersion: k8s.mariadb.com/v1alpha1
+kind: MaxScale
+metadata:
+  name: test-maxscale-maxscale
+status:
+  (primaryServer != null): true
+  (conditions[?type == 'Ready']):
+    - status: "True"
+---
+apiVersion: v1
+kind: Secret
+metadata:
+  name: test-maxscale-conn
+(base64_decode(data.password) != ''): true
+(contains(base64_decode(data.host), 'test-maxscale-maxscale')): true
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: test-maxscale-maxscale
