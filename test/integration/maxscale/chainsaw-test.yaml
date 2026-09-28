@@ -22,6 +22,22 @@ spec:
         content: kubectl -n $NAMESPACE get instance,mariadb,maxscale,pods,svc -o wide
     - script:
         content: kubectl -n $NAMESPACE get mariadb,maxscale -o yaml
+    # read_only and replication state per server tell apart "MaxScale never
+    # promoted" from "the promoted server was made read-only again" (#37).
+    - script:
+        content: |
+          pass=$(kubectl -n $NAMESPACE get secret everest-secrets-test-maxscale-root -o jsonpath='{.data.root-password}' | base64 -d)
+          for i in 0 1 2; do
+            echo "=== test-maxscale-$i"
+            kubectl -n $NAMESPACE exec test-maxscale-$i -c mariadb -- env MYSQL_PWD="$pass" \
+              mariadb -uroot -e "SELECT @@read_only, @@gtid_current_pos; SHOW ALL SLAVES STATUS\G" || true
+          done
+    - script:
+        content: kubectl -n $NAMESPACE logs -l app.kubernetes.io/name=maxscale --tail 200 --prefix || true
+    - script:
+        content: |
+          kubectl logs -A -l app.kubernetes.io/name=mariadb-operator --tail 300 --prefix \
+            | grep -E 'test-maxscale|readonly|read_only|primary|MaxScale' | tail -150 || true
     - script:
         content: |
           ns=$(kubectl get deploy -A -l app.kubernetes.io/name=provider-mariadb \
