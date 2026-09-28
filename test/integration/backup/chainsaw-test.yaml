@@ -84,12 +84,12 @@ spec:
               set -eu
               kubectl -n "$NAMESPACE" run mariadb-seed \
                 --rm -i --restart=Never \
-                --image=mariadb:11.4 \
+                --image=mariadb:12.3 \
                 --overrides='{
                   "spec": {
                     "containers": [{
                       "name": "mariadb-seed",
-                      "image": "mariadb:11.4",
+                      "image": "mariadb:12.3",
                       "command": ["sh", "-c"],
                       "args": ["set -eu; mariadb -h \"$DB_HOST\" -P \"$DB_PORT\" -u \"$DB_USER\" --ssl-ca=/tls/ca.crt -e \"CREATE TABLE IF NOT EXISTS everest.restore_probe (id INT PRIMARY KEY); INSERT INTO everest.restore_probe (id) VALUES (42) ON DUPLICATE KEY UPDATE id=id;\"; echo seeded"],
                       "env": [
@@ -139,12 +139,12 @@ spec:
               set -eu
               kubectl -n "$NAMESPACE" run mariadb-verify \
                 --rm -i --restart=Never \
-                --image=mariadb:11.4 \
+                --image=mariadb:12.3 \
                 --overrides='{
                   "spec": {
                     "containers": [{
                       "name": "mariadb-verify",
-                      "image": "mariadb:11.4",
+                      "image": "mariadb:12.3",
                       "command": ["sh", "-c"],
                       "args": ["set -eu; val=$(mariadb -h \"$DB_HOST\" -P \"$DB_PORT\" -u \"$DB_USER\" --ssl-ca=/tls/ca.crt -Nse \"SELECT id FROM everest.restore_probe WHERE id=42;\"); test \"$val\" = \"42\"; echo \"restore probe row present: $val\""],
                       "env": [

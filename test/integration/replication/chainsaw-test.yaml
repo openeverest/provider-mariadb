@@ -86,12 +86,12 @@ spec:
               # verify the primary Service certificate, and prove TLS was negotiated.
               kubectl -n "$NAMESPACE" run mariadb-replication-conn-check \
                 --rm -i --restart=Never \
-                --image=mariadb:11.4 \
+                --image=mariadb:12.3 \
                 --overrides='{
                   "spec": {
                     "containers": [{
                       "name": "mariadb-replication-conn-check",
-                      "image": "mariadb:11.4",
+                      "image": "mariadb:12.3",
                       "command": ["sh", "-c"],
                       "args": ["set -eu; cipher=$(mariadb -h \"$DB_HOST\" -P \"$DB_PORT\" -u \"$DB_USER\" --ssl-ca=/tls/ca.crt --ssl-verify-server-cert -Nse \"SHOW STATUS LIKE '\''Ssl_cipher'\'';\" | awk '\''{print $2}'\''); test -n \"$cipher\"; echo \"TLS cipher: $cipher\""],
                       "env": [

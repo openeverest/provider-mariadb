@@ -133,7 +133,7 @@ presets:
     spec:
       providerRef:
         name: mariadb
-      version: "11.4"
+      version: "12.3"
       topology:
         type: standalone
       components:
@@ -151,7 +151,7 @@ presets:
     spec:
       providerRef:
         name: mariadb
-      version: "11.4"
+      version: "12.3"
       topology:
         type: replication
       components:
@@ -170,7 +170,7 @@ presets:
     spec:
       providerRef:
         name: mariadb
-      version: "11.4"
+      version: "12.3"
       topology:
         type: galera
       components:

@@ -4,11 +4,13 @@ spec:
   componentTypes:
     mariadb:
       versions:
-        - default: true
-          image: mariadb:11.4
+        - image: mariadb:11.4
           version: "11.4"
         - image: mariadb:11.8
           version: "11.8"
+        - default: true
+          image: mariadb:12.3
+          version: "12.3"
     mysqld-exporter:
       versions:
         - default: true
@@ -668,9 +670,13 @@ spec:
     - components:
         engine: "11.4"
         monitoring: 0.15.1
-      default: true
       name: "11.4"
     - components:
         engine: "11.8"
         monitoring: 0.15.1
       name: "11.8"
+    - components:
+        engine: "12.3"
+        monitoring: 0.15.1
+      default: true
+      name: "12.3"

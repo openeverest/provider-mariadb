@@ -284,8 +284,9 @@ spec:
 <!-- BEGIN GENERATED: versions -->
 | Version bundle | Default | mariadb |
 |---|---|---|
-| `11.4` | ✅ | `11.4` |
+| `11.4` | | `11.4` |
 | `11.8` | | `11.8` |
+| `12.3` | ✅ | `12.3` |
 <!-- END GENERATED: versions -->
 
 Source of truth: [definition/versions.yaml](definition/versions.yaml).

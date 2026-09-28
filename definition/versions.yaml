@@ -7,9 +7,11 @@ componentTypes:
     versions:
     - version: "11.4"
       image: mariadb:11.4
-      default: true
     - version: "11.8"
       image: mariadb:11.8
+    - version: "12.3"
+      image: mariadb:12.3
+      default: true
   mysqld-exporter:
     versions:
     - version: "0.15.1"
@@ -21,11 +23,15 @@ componentTypes:
 # The bundle with default: true is used when spec.version is omitted.
 versions:
 - name: "11.4"
-  default: true
   components:
     engine: "11.4"
     monitoring: "0.15.1"
 - name: "11.8"
   components:
     engine: "11.8"
+    monitoring: "0.15.1"
+- name: "12.3"
+  default: true
+  components:
+    engine: "12.3"
     monitoring: "0.15.1"
