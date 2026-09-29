@@ -121,7 +121,7 @@ ui:
 
     proxy:
       label: "Proxy"
-      description: "Route client traffic through MariaDB MaxScale, which splits reads and writes across nodes and handles primary failover."
+      description: "Route client traffic through MariaDB MaxScale, which splits reads and writes across nodes."
       components:
         enabled:
           uiType: toggle

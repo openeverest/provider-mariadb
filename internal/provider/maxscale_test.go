@@ -181,22 +181,31 @@ func TestSyncMaxScale_DisabledDeletes(t *testing.T) {
 	require.NoError(t, SyncMaxScale(c))
 }
 
-func TestDesiredMaxScaleRef(t *testing.T) {
-	ref, err := desiredMaxScaleRef(newProxyContext(t, "galera", "", `{"enabled":true}`))
-	require.NoError(t, err)
-	assert.Nil(t, ref, "no reference until the MaxScale CR exists")
+func TestApplyMaxScaleMonitorOverlay(t *testing.T) {
+	mxs := &mariadbv1alpha1.MaxScale{}
+	applyMaxScaleMonitorOverlay(mxs)
+	assert.Equal(t, map[string]string{
+		"auto_failover":                "false",
+		"auto_rejoin":                  "false",
+		"switchover_on_low_disk_space": "false",
+	}, mxs.Spec.Monitor.Params)
 
-	existing := &mariadbv1alpha1.MaxScale{
-		ObjectMeta: metav1.ObjectMeta{Name: "test-maxscale", Namespace: "default"},
-	}
-	ref, err = desiredMaxScaleRef(newProxyContext(t, "galera", "", `{"enabled":true}`, existing))
-	require.NoError(t, err)
-	require.NotNil(t, ref)
-	assert.Equal(t, "test-maxscale", ref.Name)
+	// Operator defaults and user tuning of other parameters are preserved.
+	mxs.Spec.Monitor.Params = map[string]string{"auto_failover": "true", "failcount": "3"}
+	applyMaxScaleMonitorOverlay(mxs)
+	assert.Equal(t, "false", mxs.Spec.Monitor.Params["auto_failover"])
+	assert.Equal(t, "3", mxs.Spec.Monitor.Params["failcount"])
+}
 
-	ref, err = desiredMaxScaleRef(newProxyContext(t, "galera", "", `{"enabled":false}`, existing))
-	require.NoError(t, err)
-	assert.Nil(t, ref, "reference is cleared when the proxy is disabled")
+func TestSyncMaxScale_MonitorParamsOnlyForReplication(t *testing.T) {
+	c := newProxyContext(t, "replication", "", `{"enabled":true}`)
+	require.NoError(t, SyncMaxScale(c))
+	assert.Equal(t, "false", getMaxScale(t, c).Spec.Monitor.Params["auto_failover"])
+
+	// galeramon does not know the mariadbmon parameters.
+	c = newProxyContext(t, "galera", "", `{"enabled":true}`)
+	require.NoError(t, SyncMaxScale(c))
+	assert.Nil(t, getMaxScale(t, c).Spec.Monitor.Params)
 }
 
 func TestValidateProxy(t *testing.T) {

@@ -1,5 +1,5 @@
-# Expected outcome of the primary-failover step: the old primary rejoined as a
-# replica (auto_rejoin), so all three servers are running with exactly one
+# Expected outcome of the primary-failover step: the operator rejoined the old
+# primary as a replica, so all three servers are running with exactly one
 # master, and the Instance is Ready again.
 apiVersion: k8s.mariadb.com/v1alpha1
 kind: MaxScale

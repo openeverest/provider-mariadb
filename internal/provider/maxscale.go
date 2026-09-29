@@ -52,8 +52,7 @@ func isProxyEnabled(c *controller.Context) (bool, error) {
 }
 
 // SyncMaxScale creates or updates the MaxScale CR in front of the MariaDB when
-// the proxy is enabled, and deletes it otherwise. The MariaDB.spec.maxScaleRef
-// overlay that hands primary failover over to MaxScale is applied in SyncMariaDB.
+// the proxy is enabled, and deletes it otherwise.
 func SyncMaxScale(c *controller.Context) error {
 	enabled, err := isProxyEnabled(c)
 	if err != nil {
@@ -127,6 +126,9 @@ func SyncMaxScale(c *controller.Context) error {
 	// MaxScale listeners only accept TLS clients once TLS is on, so it mirrors
 	// the engine's enforcement rather than its enablement.
 	applyMaxScaleTLSOverlay(mxs, tlsSettings.Enabled && tlsSettings.Required)
+	if isReplicationTopology(c) {
+		applyMaxScaleMonitorOverlay(mxs)
+	}
 
 	if err := c.Apply(mxs); err != nil {
 		return fmt.Errorf("apply MaxScale: %w", err)
@@ -146,6 +148,25 @@ func applyMaxScaleTLSOverlay(mxs *mariadbv1alpha1.MaxScale, enabled bool) {
 	mxs.Spec.TLS.Enabled = enabled
 }
 
+// maxScaleTopologyParams are the mariadbmon operations that change the
+// replication topology. The operator stays the single owner of failover,
+// rejoin and read_only: running them in MaxScale as well races with the
+// operator, which reconfigures a node MaxScale just promoted back into a
+// read-only replica of the failed primary (#37).
+var maxScaleTopologyParams = []string{"auto_failover", "auto_rejoin", "switchover_on_low_disk_space"}
+
+// applyMaxScaleMonitorOverlay turns the mariadbmon topology operations off and
+// preserves any other monitor parameter. It must be set before the operator
+// defaults the monitor, which it only does while the parameters are unset.
+func applyMaxScaleMonitorOverlay(mxs *mariadbv1alpha1.MaxScale) {
+	if mxs.Spec.Monitor.Params == nil {
+		mxs.Spec.Monitor.Params = map[string]string{}
+	}
+	for _, param := range maxScaleTopologyParams {
+		mxs.Spec.Monitor.Params[param] = "false"
+	}
+}
+
 // teardownMaxScale deletes the MaxScale CR when the proxy is disabled. Absence
 // is not an error.
 func teardownMaxScale(c *controller.Context) error {
@@ -163,25 +184,6 @@ func teardownMaxScale(c *controller.Context) error {
 		return fmt.Errorf("delete MaxScale %q: %w", mxs.Name, err)
 	}
 	return nil
-}
-
-// desiredMaxScaleRef returns the MariaDB.spec.maxScaleRef to set for the
-// Instance, or nil when the proxy is disabled or its CR does not exist yet.
-// Gating on existence avoids pointing the MariaDB at a missing MaxScale, which
-// the operator reports as a not-ready MariaDB.
-func desiredMaxScaleRef(c *controller.Context) (*mariadbv1alpha1.ObjectReference, error) {
-	enabled, err := isProxyEnabled(c)
-	if err != nil || !enabled {
-		return nil, err
-	}
-	name := maxScaleName(c.Name())
-	if err := c.Get(&mariadbv1alpha1.MaxScale{}, name); err != nil {
-		if apierrors.IsNotFound(err) {
-			return nil, nil
-		}
-		return nil, fmt.Errorf("get MaxScale: %w", err)
-	}
-	return &mariadbv1alpha1.ObjectReference{Name: name}, nil
 }
 
 // readyMaxScale returns the MaxScale CR once it is ready to serve clients.

@@ -223,7 +223,7 @@ spec:
             - enabled
             - replicas
             - externalAccess
-          description: Route client traffic through MariaDB MaxScale, which balances connections across nodes and handles primary failover.
+          description: Route client traffic through MariaDB MaxScale, which balances connections across nodes.
           label: Proxy
         resources:
           components:
@@ -463,7 +463,7 @@ spec:
             - enabled
             - replicas
             - externalAccess
-          description: Route client traffic through MariaDB MaxScale, which splits reads and writes across nodes and handles primary failover.
+          description: Route client traffic through MariaDB MaxScale, which splits reads and writes across nodes.
           label: Proxy
         resources:
           components:

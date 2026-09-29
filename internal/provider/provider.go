@@ -62,8 +62,8 @@ func New() *MariaDBProvider {
 				// Re-enqueue when the PITR CR status changes so the recovery
 				// window surfaced on the Instance stays current.
 				controller.WatchOwned(&mariadbv1alpha1.PointInTimeRecovery{}),
-				// Re-enqueue when MaxScale changes so the MariaDB picks up its
-				// reference and the Instance status tracks proxy readiness.
+				// Re-enqueue when MaxScale changes so the Instance status
+				// tracks proxy readiness.
 				controller.WatchOwned(&mariadbv1alpha1.MaxScale{}),
 			},
 		},

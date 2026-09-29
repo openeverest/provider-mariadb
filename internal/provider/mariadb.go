@@ -245,14 +245,9 @@ func SyncMariaDB(c *controller.Context) error {
 	}
 	mariadbCR.Spec.PointInTimeRecoveryRef = pitrRef
 
-	// MaxScale: hand primary failover over to MaxScale once its CR exists, and
-	// take it back when the proxy is disabled. The CR itself is reconciled by
-	// SyncMaxScale.
-	maxScaleRef, err := desiredMaxScaleRef(c)
-	if err != nil {
-		return fmt.Errorf("resolve MaxScale reference: %w", err)
-	}
-	mariadbCR.Spec.MaxScaleRef = maxScaleRef
+	// MaxScale only routes traffic; the operator keeps owning failover, so the
+	// MariaDB is never handed over to MaxScale via spec.maxScaleRef (#37).
+	mariadbCR.Spec.MaxScaleRef = nil
 
 	if err := c.Apply(mariadbCR); err != nil {
 		return fmt.Errorf("apply MariaDB: %w", err)

@@ -4,8 +4,9 @@
 # Provisions a real 3-node replication cluster fronted by MaxScale through the
 # bundled mariadb-operator, verifies that a client can authenticate through the
 # MaxScale Service using the credentials published in the connection Secret,
-# then disables the proxy and checks that MaxScale is removed and failover is
-# handed back to the operator. Finally it tears the Instance down.
+# fails the primary and checks that writes through MaxScale resume on the
+# operator-promoted primary, then disables the proxy and checks that MaxScale is
+# removed. Finally it tears the Instance down.
 apiVersion: chainsaw.kyverno.io/v1alpha1
 kind: Test
 metadata:
@@ -22,8 +23,8 @@ spec:
         content: kubectl -n $NAMESPACE get instance,mariadb,maxscale,pods,svc -o wide
     - script:
         content: kubectl -n $NAMESPACE get mariadb,maxscale -o yaml
-    # read_only and replication state per server tell apart "MaxScale never
-    # promoted" from "the promoted server was made read-only again" (#37).
+    # read_only and replication state per server show whether a new primary
+    # was promoted and left writable (#37).
     - script:
         content: |
           pass=$(kubectl -n $NAMESPACE get secret everest-secrets-test-maxscale-root -o jsonpath='{.data.root-password}' | base64 -d)
@@ -107,11 +108,11 @@ spec:
                   }
                 }'
 
-    # Take the primary down for real and require MaxScale to promote another
-    # server that accepts writes. A new primary left read-only by the operator
+    # Take the primary down for real: the operator must promote another server
+    # and MaxScale must route writes to it. A promoted primary left read-only
     # (#37) fails the write loop below. Cordoning keeps the recreated Pod Pending
-    # (its PVC is node-local); a plain delete restarts it faster than MaxScale's
-    # failure detection, so no failover would happen.
+    # (its PVC is node-local); a plain delete restarts it faster than failure
+    # detection, so no failover would happen.
     - name: primary-failover
       timeouts:
         exec: 10m
@@ -135,7 +136,7 @@ spec:
                 sleep 5
               done
               if [ -z "$new" ] || [ "$new" = "$old" ]; then
-                echo "FAIL: MaxScale did not promote a new primary (still '$new')" >&2
+                echo "FAIL: MaxScale reports no new primary (still '$new')" >&2
                 exit 1
               fi
               echo "new primary: $new"
@@ -170,8 +171,8 @@ spec:
             content: |
               kubectl get nodes --field-selector spec.unschedulable=true -o name | xargs -r kubectl uncordon
 
-    # Disabling the proxy removes MaxScale, hands failover back to the operator
-    # and repoints the connection details at the primary Service.
+    # Disabling the proxy removes MaxScale and repoints the connection details
+    # at the primary Service.
     - name: disable-proxy
       timeouts:
         assert: 5m

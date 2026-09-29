@@ -170,8 +170,8 @@ also encrypt state snapshot transfers by default; this can be changed with
 
 The `galera` and `replication` topologies can be fronted by
 [MariaDB MaxScale](https://github.com/mariadb-operator/mariadb-operator/blob/main/docs/maxscale.md),
-which routes writes to the primary, balances reads across nodes and takes over
-primary failover from the operator. Enable it through the `proxy` component:
+which routes writes to the primary and balances reads across nodes. Enable it
+through the `proxy` component:
 
 ```yaml
 spec:
@@ -189,21 +189,20 @@ spec:
 While the proxy is enabled, the connection Secret points at the MaxScale
 Service (`<name>-maxscale`) with the same credentials. MaxScale terminates TLS
 only when the engine requires it (`tls.required: true`); the connection Secret
-then carries the MaxScale CA. Setting `enabled: false` removes MaxScale and hands
-failover back to the operator. See [examples/instance-maxscale.yaml](examples/instance-maxscale.yaml).
+then carries the MaxScale CA. Setting `enabled: false` removes MaxScale. See
+[examples/instance-maxscale.yaml](examples/instance-maxscale.yaml).
+
+Primary failover, rejoin and `read_only` stay with the operator: MaxScale only
+routes traffic and follows the topology. With `replication`, the provider turns
+off MaxScale's own `auto_failover`, `auto_rejoin` and
+`switchover_on_low_disk_space`, because running failover in both MaxScale and
+the operator races and can leave no writable primary
+([#37](https://github.com/openeverest/provider-mariadb/issues/37)).
 
 > [!IMPORTANT]
 > MaxScale is licensed under the
 > [Business Source License](https://github.com/mariadb-corporation/MaxScale/blob/23.08/LICENSE.TXT).
 > Make sure you understand the implications before enabling it.
-
-> [!WARNING]
-> With the `replication` topology, MaxScale's monitor performs automatic failover
-> while the operator keeps reconciling replica roles. Under unlucky timing the
-> operator can reconfigure a node MaxScale has just promoted back to read-only,
-> leaving no writable primary ([#37](https://github.com/openeverest/provider-mariadb/issues/37)).
-> Alert on MaxScale reporting no server in `Master` state and keep a manual
-> recovery path (e.g. a switchover via `MaxScale.spec.primaryServer`).
 
 ## Backups and restore
 
