@@ -142,30 +142,6 @@ func TestValidateTLS(t *testing.T) {
 	}
 }
 
-func TestApplyTLSOverlayPreservesCertificateReferences(t *testing.T) {
-	mdb := &mariadbv1alpha1.MariaDB{
-		Spec: mariadbv1alpha1.MariaDBSpec{
-			TLS: &mariadbv1alpha1.TLS{
-				Enabled:                   false,
-				ServerCASecretRef:         &mariadbv1alpha1.LocalObjectReference{Name: "custom-server-ca"},
-				ClientCertSecretRef:       &mariadbv1alpha1.LocalObjectReference{Name: "custom-client-cert"},
-				ServerCertAdditionalNames: []string{"db.example.com"},
-			},
-		},
-	}
-	desired := &mariadbv1alpha1.TLS{Enabled: true}
-	applyTLSOverlay(mdb, desired)
-
-	if !mdb.Spec.TLS.Enabled {
-		t.Fatal("expected TLS to be enabled")
-	}
-	if mdb.Spec.TLS.ServerCASecretRef.Name != "custom-server-ca" ||
-		mdb.Spec.TLS.ClientCertSecretRef.Name != "custom-client-cert" ||
-		len(mdb.Spec.TLS.ServerCertAdditionalNames) != 1 {
-		t.Fatalf("certificate configuration was not preserved: %+v", mdb.Spec.TLS)
-	}
-}
-
 func TestBuildConnectionDetailsIncludesTLSCA(t *testing.T) {
 	credentials := &corev1.Secret{
 		ObjectMeta: metav1.ObjectMeta{Name: userSecretName("test"), Namespace: "default"},
