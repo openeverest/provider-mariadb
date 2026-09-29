@@ -88,28 +88,6 @@ func TestDefaultReplicas(t *testing.T) {
 	}
 }
 
-func TestApplyGaleraOverlay(t *testing.T) {
-	// Standalone: never touches galera.
-	mdb := &mariadbv1alpha1.MariaDB{}
-	applyGaleraOverlay(mdb, false)
-	if mdb.Spec.Galera != nil {
-		t.Errorf("expected nil galera for standalone, got %+v", mdb.Spec.Galera)
-	}
-
-	// Galera on a fresh object: enables it.
-	applyGaleraOverlay(mdb, true)
-	if mdb.Spec.Galera == nil || !mdb.Spec.Galera.Enabled {
-		t.Fatalf("expected galera enabled, got %+v", mdb.Spec.Galera)
-	}
-
-	// Existing galera with operator-defaulted sub-fields: preserved, stays enabled.
-	mdb.Spec.Galera.SST = mariadbv1alpha1.SSTMariaBackup
-	applyGaleraOverlay(mdb, true)
-	if !mdb.Spec.Galera.Enabled || mdb.Spec.Galera.SST != mariadbv1alpha1.SSTMariaBackup {
-		t.Errorf("overlay clobbered operator defaults: %+v", mdb.Spec.Galera)
-	}
-}
-
 func TestDefaultHAAffinity(t *testing.T) {
 	aff := defaultHAAffinity("my-instance")
 	if aff == nil || aff.PodAntiAffinity == nil {

@@ -196,7 +196,9 @@ spec:
           - name: daily
             enabled: true
             cron: "0 0 * * *"
-            retentionCopies: 7
+            retention:
+              type: count   # or `type: time` with `duration: 30d` (d/w/m)
+              count: 7
             parameters:
               type: physical
               compression: gzip
