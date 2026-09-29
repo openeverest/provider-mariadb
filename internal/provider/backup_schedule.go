@@ -21,6 +21,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"reflect"
+	"strconv"
 	"time"
 
 	mariadbv1alpha1 "github.com/mariadb-operator/mariadb-operator/v26/api/v1alpha1"
@@ -30,6 +31,7 @@ import (
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/utils/ptr"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
 
@@ -56,8 +58,8 @@ const (
 	// backup, so Mirror can reconstruct the run's parameters.type.
 	typeLabel = "backup.provider-mariadb.openeverest.io/type"
 
-	// keepAllRetention approximates "keep every backup" for schedules that set
-	// retentionCopies to 0, since the operator only supports duration retention.
+	// keepAllRetention approximates "keep every backup" for schedules without a
+	// retention, since the operator only supports duration retention.
 	keepAllRetention = 100 * 365 * 24 * time.Hour
 )
 
@@ -70,10 +72,45 @@ func scheduledBackupName(instance, schedule string) string {
 	return "mdb-sched-" + hex.EncodeToString(sum[:])[:12]
 }
 
-// deriveMaxRetention approximates a retention duration from a schedule's cron
-// cadence and desired copy count, since the operator enforces retention by age
-// rather than by count. retentionCopies<=0 means "keep all".
-func deriveMaxRetention(cronExpr string, copies int32) (metav1.Duration, error) {
+// deriveMaxRetention maps a schedule's retention onto the operator's age-based
+// maxRetention. Time retention maps directly; count retention is approximated
+// from the cron cadence. A nil retention keeps all backups.
+func deriveMaxRetention(cronExpr string, retention *corev1alpha1.BackupScheduleRetention) (metav1.Duration, error) {
+	if retention == nil {
+		return metav1.Duration{Duration: keepAllRetention}, nil
+	}
+	switch retention.Type {
+	case corev1alpha1.BackupScheduleRetentionTypeTime:
+		d, err := parseRetentionDuration(retention.Duration)
+		if err != nil {
+			return metav1.Duration{}, err
+		}
+		return metav1.Duration{Duration: d}, nil
+	case corev1alpha1.BackupScheduleRetentionTypeCount, "":
+		return countRetention(cronExpr, ptr.Deref(retention.Count, 0))
+	default:
+		return metav1.Duration{}, fmt.Errorf("unsupported retention type %q", retention.Type)
+	}
+}
+
+// parseRetentionDuration parses the "<n>d", "<n>w" or "<n>m" retention
+// window; a month counts as 30 days.
+func parseRetentionDuration(s string) (time.Duration, error) {
+	units := map[byte]time.Duration{'d': 24 * time.Hour, 'w': 7 * 24 * time.Hour, 'm': 30 * 24 * time.Hour}
+	if len(s) < 2 {
+		return 0, fmt.Errorf("invalid retention duration %q", s)
+	}
+	unit, ok := units[s[len(s)-1]]
+	n, err := strconv.Atoi(s[:len(s)-1])
+	if !ok || err != nil || n < 1 {
+		return 0, fmt.Errorf("invalid retention duration %q: want <n>d, <n>w or <n>m", s)
+	}
+	return time.Duration(n) * unit, nil
+}
+
+// countRetention approximates keeping the given number of copies from the cron
+// cadence, since the operator enforces retention by age rather than by count.
+func countRetention(cronExpr string, copies int32) (metav1.Duration, error) {
 	if copies <= 0 {
 		return metav1.Duration{Duration: keepAllRetention}, nil
 	}
@@ -203,7 +240,7 @@ func reconcileScheduledBackup(
 	if err != nil {
 		return err
 	}
-	retention, err := deriveMaxRetention(schedule.Cron, schedule.RetentionCopies)
+	retention, err := deriveMaxRetention(schedule.Cron, schedule.Retention)
 	if err != nil {
 		return &controller.BackupConfigError{Reason: "InvalidSchedule", Message: err.Error()}
 	}

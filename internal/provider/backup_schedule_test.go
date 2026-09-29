@@ -73,30 +73,59 @@ func TestScheduledBackupName(t *testing.T) {
 }
 
 func TestDeriveMaxRetention(t *testing.T) {
-	t.Run("zero copies keeps all", func(t *testing.T) {
-		got, err := deriveMaxRetention("0 0 * * *", 0)
+	t.Run("no retention keeps all", func(t *testing.T) {
+		got, err := deriveMaxRetention("0 0 * * *", nil)
 		require.NoError(t, err)
 		assert.Equal(t, keepAllRetention, got.Duration)
 	})
 
 	t.Run("daily with 3 copies retains 4 days", func(t *testing.T) {
-		got, err := deriveMaxRetention("0 0 * * *", 3)
+		got, err := deriveMaxRetention("0 0 * * *", countRetentionOf(3))
 		require.NoError(t, err)
 		assert.Equal(t, 4*24*time.Hour, got.Duration)
 	})
 
 	t.Run("invalid cron errors", func(t *testing.T) {
-		_, err := deriveMaxRetention("not-a-cron", 3)
+		_, err := deriveMaxRetention("not-a-cron", countRetentionOf(3))
 		require.Error(t, err)
 	})
+
+	t.Run("time retention maps directly", func(t *testing.T) {
+		for in, want := range map[string]time.Duration{
+			"30d": 30 * 24 * time.Hour,
+			"4w":  28 * 24 * time.Hour,
+			"2m":  60 * 24 * time.Hour,
+		} {
+			got, err := deriveMaxRetention("0 0 * * *", &corev1alpha1.BackupScheduleRetention{
+				Type:     corev1alpha1.BackupScheduleRetentionTypeTime,
+				Duration: in,
+			})
+			require.NoError(t, err, in)
+			assert.Equal(t, want, got.Duration, in)
+		}
+	})
+
+	t.Run("invalid time retention errors", func(t *testing.T) {
+		for _, in := range []string{"", "d", "0d", "10h", "xw"} {
+			_, err := deriveMaxRetention("0 0 * * *", &corev1alpha1.BackupScheduleRetention{
+				Type:     corev1alpha1.BackupScheduleRetentionTypeTime,
+				Duration: in,
+			})
+			require.Error(t, err, in)
+		}
+	})
+}
+
+func countRetentionOf(n int32) *corev1alpha1.BackupScheduleRetention {
+	return &corev1alpha1.BackupScheduleRetention{Type: corev1alpha1.BackupScheduleRetentionTypeCount, Count: &n}
 }
 
 func TestSyncScheduledBackupsCreatesOperatorBackup(t *testing.T) {
 	instance := instanceWithSchedule(corev1alpha1.InstanceBackupSchedule{
-		Name:            "daily",
-		Enabled:         true,
-		Cron:            "0 0 * * *",
-		RetentionCopies: 3,
+		Name:      "daily",
+		Enabled:   true,
+		Cron:      "0 0 * * *",
+		Retention: countRetentionOf(3),
 	}, "s3")
 	mdb := &mariadbv1alpha1.MariaDB{ObjectMeta: metav1.ObjectMeta{Name: "db", Namespace: "ns"}}
 	c := newContextForInstance(t, instance, mdb, s3BackupStorage("s3", "https://minio.example.com:9000"))
