@@ -18,3 +18,6 @@ components:
   monitoring:
     type: mysqld-exporter
     parametersSchema: MonitoringParameters
+  proxy:
+    type: maxscale
+    parametersSchema: MaxScaleParameters

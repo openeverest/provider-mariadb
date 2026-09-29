@@ -1,0 +1,11 @@
+# Expected outcome of the primary-failover step: the operator promoted exactly
+# one new primary and MaxScale routes to it. The failed primary is not expected
+# to rejoin: without log_slave_updates the new primary's binary log lacks the
+# history it would stream from (error 1236), and re-seeding it needs the
+# operator's replica recovery.
+apiVersion: k8s.mariadb.com/v1alpha1
+kind: MaxScale
+metadata:
+  name: test-maxscale-maxscale
+status:
+  (length(servers[?contains(state, 'Master')])): 1
