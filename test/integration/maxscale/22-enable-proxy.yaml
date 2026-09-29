@@ -1,0 +1,10 @@
+# Re-enable the MaxScale proxy on the running Instance.
+apiVersion: core.openeverest.io/v1alpha1
+kind: Instance
+metadata:
+  name: test-maxscale
+spec:
+  components:
+    proxy:
+      parameters:
+        enabled: true

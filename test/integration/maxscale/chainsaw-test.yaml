@@ -4,9 +4,9 @@
 # Provisions a real 3-node replication cluster fronted by MaxScale through the
 # bundled mariadb-operator, verifies that a client can authenticate through the
 # MaxScale Service using the credentials published in the connection Secret,
-# fails the primary and checks that writes through MaxScale resume on the
-# operator-promoted primary, then disables the proxy and checks that MaxScale is
-# removed. Finally it tears the Instance down.
+# disables and re-enables the proxy, then fails the primary and checks that
+# writes through MaxScale resume on the operator-promoted primary. Finally it
+# tears the Instance down.
 apiVersion: chainsaw.kyverno.io/v1alpha1
 kind: Test
 metadata:
@@ -14,8 +14,8 @@ metadata:
 spec:
   description: |
     Create a replication Instance with the MaxScale proxy enabled, connect
-    through MaxScale with the generated login/password, disable the proxy,
-    then delete the Instance.
+    through MaxScale with the generated login/password, toggle the proxy off
+    and on, fail the primary, then delete the Instance.
 
   # Collect diagnostics when a step fails.
   catch:
@@ -37,7 +37,7 @@ spec:
         content: kubectl -n $NAMESPACE logs -l app.kubernetes.io/name=maxscale --tail 200 --prefix || true
     - script:
         content: |
-          kubectl logs -A -l app.kubernetes.io/name=mariadb-operator --tail 300 --prefix \
+          kubectl logs -A -l app.kubernetes.io/name=operator --tail 300 --prefix \
             | grep -E 'test-maxscale|readonly|read_only|primary|MaxScale' | tail -150 || true
     - script:
         content: |
@@ -108,11 +108,41 @@ spec:
                   }
                 }'
 
+    # Disabling the proxy removes MaxScale and repoints the connection details
+    # at the primary Service.
+    - name: disable-proxy
+      timeouts:
+        assert: 5m
+      try:
+        - patch:
+            file: 20-disable-proxy.yaml
+        - wait:
+            apiVersion: k8s.mariadb.com/v1alpha1
+            kind: MaxScale
+            name: test-maxscale-maxscale
+            timeout: 3m
+            for:
+              deletion: {}
+        - assert:
+            file: 21-assert.yaml
+
+    # Enabling the proxy on an existing cluster brings MaxScale back and
+    # repoints the connection details at it.
+    - name: enable-proxy
+      timeouts:
+        assert: 10m
+      try:
+        - patch:
+            file: 22-enable-proxy.yaml
+        - assert:
+            file: 11-assert.yaml
+
     # Take the primary down for real: the operator must promote another server
     # and MaxScale must route writes to it. A promoted primary left read-only
     # (#37) fails the write loop below. Cordoning keeps the recreated Pod Pending
     # (its PVC is node-local); a plain delete restarts it faster than failure
-    # detection, so no failover would happen.
+    # detection, so no failover would happen. This step runs last: the failed
+    # primary does not rejoin on its own (see 30-assert.yaml).
     - name: primary-failover
       timeouts:
         exec: 10m
@@ -160,34 +190,12 @@ spec:
                     }]
                   }
                 }'
-        # Let the old primary come back so it can rejoin as a replica.
-        - script:
-            content: |
-              kubectl get nodes --field-selector spec.unschedulable=true -o name | xargs -r kubectl uncordon
         - assert:
-            file: 12-assert.yaml
+            file: 30-assert.yaml
       finally:
         - script:
             content: |
               kubectl get nodes --field-selector spec.unschedulable=true -o name | xargs -r kubectl uncordon
-
-    # Disabling the proxy removes MaxScale and repoints the connection details
-    # at the primary Service.
-    - name: disable-proxy
-      timeouts:
-        assert: 5m
-      try:
-        - patch:
-            file: 20-disable-proxy.yaml
-        - wait:
-            apiVersion: k8s.mariadb.com/v1alpha1
-            kind: MaxScale
-            name: test-maxscale-maxscale
-            timeout: 3m
-            for:
-              deletion: {}
-        - assert:
-            file: 21-assert.yaml
 
     - name: delete-instance
       try:
