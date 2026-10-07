@@ -177,6 +177,41 @@ func TestSyncPITRCreatesResources(t *testing.T) {
 	assert.Equal(t, "true", base.Labels[pitrBaseLabel])
 }
 
+func TestSyncPITRCompression(t *testing.T) {
+	newInstance := func() *corev1alpha1.Instance {
+		return pitrInstance(string(definition.TopologyTypeReplication),
+			pitrStorage("s3", true, physicalSchedule("daily")))
+	}
+
+	t.Run("new PITR CR uses zstd", func(t *testing.T) {
+		c := newPITRContext(t, newInstance(), mariadbCR(), s3BackupStorage("s3", "https://minio.example.com:9000"))
+
+		require.NoError(t, SyncPITR(c))
+
+		pitr := &mariadbv1alpha1.PointInTimeRecovery{}
+		require.NoError(t, c.Get(pitr, pitrCRName("db")))
+		assert.Equal(t, mariadbv1alpha1.CompressZstd, pitr.Spec.Compression)
+	})
+
+	t.Run("existing PITR CR keeps its compression", func(t *testing.T) {
+		// spec.compression is immutable, so an existing CR must not be changed.
+		existing := &mariadbv1alpha1.PointInTimeRecovery{
+			ObjectMeta: metav1.ObjectMeta{Name: pitrCRName("db"), Namespace: "ns"},
+			Spec: mariadbv1alpha1.PointInTimeRecoverySpec{
+				PhysicalBackupRef: mariadbv1alpha1.LocalObjectReference{Name: pitrBaseBackupName("db")},
+				Compression:       mariadbv1alpha1.CompressGzip,
+			},
+		}
+		c := newPITRContext(t, newInstance(), mariadbCR(), existing,
+			s3BackupStorage("s3", "https://minio.example.com:9000"))
+
+		require.NoError(t, SyncPITR(c))
+
+		pitr := &mariadbv1alpha1.PointInTimeRecovery{}
+		require.NoError(t, c.Get(pitr, pitrCRName("db")))
+		assert.Equal(t, mariadbv1alpha1.CompressGzip, pitr.Spec.Compression)
+	})
+}
 func TestSyncPITRWaitsForMariaDB(t *testing.T) {
 	in := pitrInstance(string(definition.TopologyTypeReplication),
 		pitrStorage("s3", true, physicalSchedule("daily")))
