@@ -66,7 +66,7 @@ provider itself is covered under [Installation](#installation).
 | Proxy / load balancing (MaxScale) | ✅ | opt-in via the `proxy` component on `galera` and `replication`; see [MaxScale proxy](#maxscale-proxy) |
 | Custom configuration | ✅ | `my.cnf` via the engine component's `configuration` parameter |
 | Monitoring | ✅ | opt-in via the `monitoring` component; deploys `mysqld-exporter` and a Prometheus `ServiceMonitor` — requires the `ServiceMonitor` CRD (`monitoring.coreos.com`) |
-| Pod scheduling (affinity) | ✅ | `spec.components.engine.schedulingPolicy.affinity` — `nodeAffinity` and `podAntiAffinity` are mapped to the operator; `podAffinity` is rejected |
+| Pod scheduling | ✅ | `spec.components.{engine,proxy}.schedulingPolicy` — `affinity` (`nodeAffinity` and `podAntiAffinity`; `podAffinity` is rejected), `nodeSelector`, `tolerations` and `topologySpreadConstraints`; `schedulerName` is not supported. A set `affinity` replaces the HA default soft anti-affinity, `{}` sets none |
 | TLS | ✅ | enabled by default with operator-managed certificates; CA is published in the connection Secret |
 
 Stateful workloads additionally report:
@@ -235,7 +235,9 @@ spec:
           - name: daily
             enabled: true
             cron: "0 0 * * *"
-            retentionCopies: 7
+            retention:
+              type: count   # or `type: time` with `duration: 30d` (d/w/m)
+              count: 7
             parameters:
               type: physical
               compression: gzip

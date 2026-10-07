@@ -46,7 +46,7 @@ func newTLSContext(t *testing.T, topology, params string, objs ...client.Object)
 		t.Fatalf("add MariaDB scheme: %v", err)
 	}
 
-	engine := corev1alpha1.ComponentSpec{Name: common.ComponentEngine, Type: common.ComponentTypeMariaDB}
+	engine := corev1alpha1.ComponentSpec{Type: common.ComponentTypeMariaDB}
 	if params != "" {
 		engine.Parameters = &runtime.RawExtension{Raw: []byte(params)}
 	}
@@ -139,30 +139,6 @@ func TestValidateTLS(t *testing.T) {
 				t.Fatalf("validateTLS() error = %v, wantErr %v", err, tt.wantErr)
 			}
 		})
-	}
-}
-
-func TestApplyTLSOverlayPreservesCertificateReferences(t *testing.T) {
-	mdb := &mariadbv1alpha1.MariaDB{
-		Spec: mariadbv1alpha1.MariaDBSpec{
-			TLS: &mariadbv1alpha1.TLS{
-				Enabled:                   false,
-				ServerCASecretRef:         &mariadbv1alpha1.LocalObjectReference{Name: "custom-server-ca"},
-				ClientCertSecretRef:       &mariadbv1alpha1.LocalObjectReference{Name: "custom-client-cert"},
-				ServerCertAdditionalNames: []string{"db.example.com"},
-			},
-		},
-	}
-	desired := &mariadbv1alpha1.TLS{Enabled: true}
-	applyTLSOverlay(mdb, desired)
-
-	if !mdb.Spec.TLS.Enabled {
-		t.Fatal("expected TLS to be enabled")
-	}
-	if mdb.Spec.TLS.ServerCASecretRef.Name != "custom-server-ca" ||
-		mdb.Spec.TLS.ClientCertSecretRef.Name != "custom-client-cert" ||
-		len(mdb.Spec.TLS.ServerCertAdditionalNames) != 1 {
-		t.Fatalf("certificate configuration was not preserved: %+v", mdb.Spec.TLS)
 	}
 }
 

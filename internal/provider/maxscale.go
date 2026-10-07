@@ -18,9 +18,11 @@ import (
 	"fmt"
 
 	mariadbv1alpha1 "github.com/mariadb-operator/mariadb-operator/v26/api/v1alpha1"
-	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
+	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
+	"k8s.io/utils/ptr"
 
+	commonv1alpha1 "github.com/openeverest/openeverest/v2/api/common/v1alpha1"
 	"github.com/openeverest/openeverest/v2/provider-runtime/controller"
 
 	"github.com/openeverest/provider-mariadb/definition/components"
@@ -51,8 +53,10 @@ func isProxyEnabled(c *controller.Context) (bool, error) {
 	return bool(params.Enabled), nil
 }
 
-// SyncMaxScale creates or updates the MaxScale CR in front of the MariaDB when
-// the proxy is enabled, and deletes it otherwise.
+// SyncMaxScale server-side applies the MaxScale CR in front of the MariaDB when
+// the proxy is enabled, and deletes it otherwise. Only the fields the provider
+// owns are declared; the operator keeps owning the ones it defaults (servers,
+// monitor module, services, auth, TLS certificates, ...).
 func SyncMaxScale(c *controller.Context) error {
 	enabled, err := isProxyEnabled(c)
 	if err != nil {
@@ -62,12 +66,51 @@ func SyncMaxScale(c *controller.Context) error {
 		return teardownMaxScale(c)
 	}
 
+	desired, err := desiredMaxScale(c)
+	if err != nil {
+		return err
+	}
+
+	existing := &mariadbv1alpha1.MaxScale{}
+	err = c.Get(existing, desired.Name)
+	switch {
+	case apierrors.IsNotFound(err):
+	case err != nil:
+		return fmt.Errorf("get MaxScale: %w", err)
+	default:
+		if err := migrateFieldOwnership(c, existing); err != nil {
+			return err
+		}
+	}
+
+	obj, err := toApplyObject(c, desired)
+	if err != nil {
+		return err
+	}
+	pruneMaxScaleZeroDefaults(obj.Object)
+	if err := c.Apply(obj); err != nil {
+		return fmt.Errorf("apply MaxScale: %w", err)
+	}
+	return nil
+}
+
+// pruneMaxScaleZeroDefaults drops the zero values of non-omitempty fields the
+// operator defaults, which toApplyObject keeps as explicit 0 / "0s".
+func pruneMaxScaleZeroDefaults(obj map[string]any) {
+	unstructured.RemoveNestedField(obj, "spec", "admin", "port")
+	unstructured.RemoveNestedField(obj, "spec", "monitor", "interval")
+	pruneUnset(obj)
+}
+
+// desiredMaxScale builds the MaxScale fields the provider owns from the proxy
+// component.
+func desiredMaxScale(c *controller.Context) (*mariadbv1alpha1.MaxScale, error) {
 	proxy := c.Instance().Spec.Components[common.ComponentProxy]
 	name := maxScaleName(c.Name())
 
 	image, err := resolveMaxScaleImage(c)
 	if err != nil {
-		return err
+		return nil, err
 	}
 
 	replicas := maxScaleDefaultReplicas
@@ -83,69 +126,45 @@ func SyncMaxScale(c *controller.Context) error {
 		}
 	}
 
-	var rawAffinity *corev1.Affinity
-	if proxy.SchedulingPolicy != nil {
-		rawAffinity = proxy.SchedulingPolicy.Affinity
-	}
-	affinity, err := buildAffinity(rawAffinity, "", true, name)
-	if err != nil {
-		return fmt.Errorf("build proxy affinity: %w", err)
-	}
+	scheduling := ptr.Deref(proxy.SchedulingPolicy, commonv1alpha1.SchedulingPolicy{})
 
 	tlsSettings, err := resolveTLSSettings(c)
 	if err != nil {
-		return fmt.Errorf("resolve TLS settings: %w", err)
+		return nil, fmt.Errorf("resolve TLS settings: %w", err)
 	}
 
-	// Read-modify-write, as for the MariaDB: the operator persists its defaults
-	// (servers, monitor, services, auth, ...) into the spec, and c.Apply
-	// performs a full Update.
-	mxs := &mariadbv1alpha1.MaxScale{}
-	if err := c.Get(mxs, name); err != nil {
-		if !apierrors.IsNotFound(err) {
-			return fmt.Errorf("get MaxScale: %w", err)
-		}
-		mxs = &mariadbv1alpha1.MaxScale{
-			ObjectMeta: c.ObjectMeta(name),
-			Spec: mariadbv1alpha1.MaxScaleSpec{
-				// Immutable; the operator infers servers, the monitor module
-				// (galeramon / mariadbmon) and credentials from it.
-				MariaDBRef: &mariadbv1alpha1.MariaDBRef{
-					ObjectReference: mariadbv1alpha1.ObjectReference{Name: c.Name()},
-					WaitForIt:       true,
-				},
+	mxs := &mariadbv1alpha1.MaxScale{
+		ObjectMeta: c.ObjectMeta(name),
+		Spec: mariadbv1alpha1.MaxScaleSpec{
+			// Immutable; the operator infers servers, the monitor module
+			// (galeramon / mariadbmon) and credentials from it.
+			MariaDBRef: &mariadbv1alpha1.MariaDBRef{
+				ObjectReference: mariadbv1alpha1.ObjectReference{Name: c.Name()},
+				WaitForIt:       true,
 			},
-		}
+			Image:             image,
+			Replicas:          replicas,
+			KubernetesService: configureService(proxy.Service),
+			// MaxScale listeners only accept TLS clients once TLS is on, so it
+			// mirrors the engine's enforcement rather than its enablement. Only
+			// the switch is declared; the certificate references stay with the
+			// operator.
+			TLS: &mariadbv1alpha1.MaxScaleTLS{Enabled: tlsSettings.Enabled && tlsSettings.Required},
+		},
 	}
-
-	mxs.Spec.Image = image
-	mxs.Spec.Replicas = replicas
 	mxs.Spec.Resources = resources
-	mxs.Spec.Affinity = affinity
-	mxs.Spec.KubernetesService = configureService(proxy.Service)
-	// MaxScale listeners only accept TLS clients once TLS is on, so it mirrors
-	// the engine's enforcement rather than its enablement.
-	applyMaxScaleTLSOverlay(mxs, tlsSettings.Enabled && tlsSettings.Required)
+	// MaxScale pods may share nodes with each other only as a last resort.
+	mxs.Spec.Affinity = buildAffinity(scheduling.Affinity, true, name)
+	mxs.Spec.NodeSelector = scheduling.NodeSelector
+	mxs.Spec.Tolerations = scheduling.Tolerations
+	mxs.Spec.TopologySpreadConstraints = convertTopologySpreadConstraints(
+		controller.TopologySpreadConstraints(&scheduling, maxScalePodLabels(name)),
+	)
+	mxs.Spec.PodMetadata = &mariadbv1alpha1.Metadata{Labels: c.PodLabels(common.ComponentProxy)}
 	if isReplicationTopology(c) {
-		applyMaxScaleMonitorOverlay(mxs)
+		mxs.Spec.Monitor.Params = maxScaleMonitorParams()
 	}
-
-	if err := c.Apply(mxs); err != nil {
-		return fmt.Errorf("apply MaxScale: %w", err)
-	}
-	return nil
-}
-
-// applyMaxScaleTLSOverlay sets only the TLS switch and preserves the CA and
-// certificate references the operator defaults from the MariaDB.
-func applyMaxScaleTLSOverlay(mxs *mariadbv1alpha1.MaxScale, enabled bool) {
-	if mxs.Spec.TLS == nil {
-		if !enabled {
-			return
-		}
-		mxs.Spec.TLS = &mariadbv1alpha1.MaxScaleTLS{}
-	}
-	mxs.Spec.TLS.Enabled = enabled
+	return mxs, nil
 }
 
 // maxScaleTopologyParams are the mariadbmon operations that change the
@@ -155,16 +174,15 @@ func applyMaxScaleTLSOverlay(mxs *mariadbv1alpha1.MaxScale, enabled bool) {
 // read-only replica of the failed primary (#37).
 var maxScaleTopologyParams = []string{"auto_failover", "auto_rejoin", "switchover_on_low_disk_space"}
 
-// applyMaxScaleMonitorOverlay turns the mariadbmon topology operations off and
-// preserves any other monitor parameter. It must be set before the operator
-// defaults the monitor, which it only does while the parameters are unset.
-func applyMaxScaleMonitorOverlay(mxs *mariadbv1alpha1.MaxScale) {
-	if mxs.Spec.Monitor.Params == nil {
-		mxs.Spec.Monitor.Params = map[string]string{}
-	}
+// maxScaleMonitorParams turns the mariadbmon topology operations off. Applied
+// on creation, they keep the operator from defaulting the monitor parameters,
+// which it only does while they are unset; other parameters stay untouched.
+func maxScaleMonitorParams() map[string]string {
+	params := make(map[string]string, len(maxScaleTopologyParams))
 	for _, param := range maxScaleTopologyParams {
-		mxs.Spec.Monitor.Params[param] = "false"
+		params[param] = "false"
 	}
+	return params
 }
 
 // teardownMaxScale deletes the MaxScale CR when the proxy is disabled. Absence

@@ -148,7 +148,7 @@ func reconcileScheduledPhysicalBackup(
 	if err != nil {
 		return err
 	}
-	retention, err := deriveMaxRetention(schedule.Cron, schedule.RetentionCopies)
+	retention, err := deriveMaxRetention(schedule.Cron, schedule.Retention)
 	if err != nil {
 		return &controller.BackupConfigError{Reason: "InvalidSchedule", Message: err.Error()}
 	}

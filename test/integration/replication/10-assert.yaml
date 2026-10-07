@@ -18,6 +18,11 @@ metadata:
   name: test-replication
 spec:
   replicas: 3
+  podMetadata:
+    labels:
+      core.openeverest.io/component: engine
+      core.openeverest.io/instance: test-replication
+      core.openeverest.io/provider: mariadb
   replication:
     enabled: true
   tls:

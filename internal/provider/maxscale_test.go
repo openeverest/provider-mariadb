@@ -48,7 +48,7 @@ func newProxyContext(t *testing.T, topology, engineParams, proxyParams string, o
 	require.NoError(t, corev1alpha1.AddToScheme(scheme))
 	require.NoError(t, mariadbv1alpha1.AddToScheme(scheme))
 
-	engine := corev1alpha1.ComponentSpec{Name: common.ComponentEngine, Type: common.ComponentTypeMariaDB}
+	engine := corev1alpha1.ComponentSpec{Type: common.ComponentTypeMariaDB}
 	if engineParams != "" {
 		engine.Parameters = &runtime.RawExtension{Raw: []byte(engineParams)}
 	}
@@ -63,7 +63,6 @@ func newProxyContext(t *testing.T, topology, engineParams, proxyParams string, o
 	}
 	if proxyParams != "" {
 		instance.Spec.Components[common.ComponentProxy] = corev1alpha1.ComponentSpec{
-			Name:       common.ComponentProxy,
 			Type:       "maxscale",
 			Image:      testMaxScaleImage,
 			Parameters: &runtime.RawExtension{Raw: []byte(proxyParams)},
@@ -113,7 +112,14 @@ func TestSyncMaxScale_Creates(t *testing.T) {
 	assert.Equal(t, "test", mxs.Spec.MariaDBRef.Name)
 	assert.Equal(t, testMaxScaleImage, mxs.Spec.Image)
 	assert.Equal(t, maxScaleDefaultReplicas, mxs.Spec.Replicas)
-	assert.Nil(t, mxs.Spec.TLS, "TLS stays off while the engine does not require it")
+	require.NotNil(t, mxs.Spec.TLS)
+	assert.False(t, mxs.Spec.TLS.Enabled, "TLS stays off while the engine does not require it")
+	require.NotNil(t, mxs.Spec.PodMetadata)
+	assert.Equal(t, map[string]string{
+		"core.openeverest.io/component": common.ComponentProxy,
+		"core.openeverest.io/instance":  "test",
+		"core.openeverest.io/provider":  common.ProviderName,
+	}, mxs.Spec.PodMetadata.Labels)
 	require.NotNil(t, mxs.Spec.Affinity)
 	require.NotNil(t, mxs.Spec.Affinity.PodAntiAffinity)
 	term := mxs.Spec.Affinity.PodAntiAffinity.PreferredDuringSchedulingIgnoredDuringExecution[0].PodAffinityTerm
@@ -122,49 +128,42 @@ func TestSyncMaxScale_Creates(t *testing.T) {
 	assert.Equal(t, "Instance", mxs.OwnerReferences[0].Kind)
 }
 
-func TestSyncMaxScale_OverlayPreservesOperatorDefaults(t *testing.T) {
-	existing := &mariadbv1alpha1.MaxScale{
-		ObjectMeta: metav1.ObjectMeta{Name: "test-maxscale", Namespace: "default"},
-		Spec: mariadbv1alpha1.MaxScaleSpec{
-			MariaDBRef: &mariadbv1alpha1.MariaDBRef{ObjectReference: mariadbv1alpha1.ObjectReference{Name: "test"}},
-			Servers:    []mariadbv1alpha1.MaxScaleServer{{Name: "test-0", Address: "test-0.test-internal"}},
-			Monitor:    mariadbv1alpha1.MaxScaleMonitor{Module: mariadbv1alpha1.MonitorModuleMariadb},
-			TLS: &mariadbv1alpha1.MaxScaleTLS{
-				ServerCASecretRef: &mariadbv1alpha1.LocalObjectReference{Name: "test-ca-bundle"},
-			},
-		},
-	}
-	c := newProxyContext(t, "replication", `{"tls":{"required":true}}`, `{"enabled":true}`, existing)
+func TestDesiredMaxScale_FollowsProxyAndEngine(t *testing.T) {
+	c := newProxyContext(t, "replication", `{"tls":{"required":true}}`, `{"enabled":true}`)
 	proxy := c.Instance().Spec.Components[common.ComponentProxy]
 	proxy.Replicas = ptr.To(int32(3))
 	proxy.Service = &corev1alpha1.Service{ServiceType: corev1.ServiceTypeLoadBalancer}
 	c.Instance().Spec.Components[common.ComponentProxy] = proxy
 
-	require.NoError(t, SyncMaxScale(c))
-
-	mxs := getMaxScale(t, c)
+	mxs, err := desiredMaxScale(c)
+	require.NoError(t, err)
 	assert.Equal(t, int32(3), mxs.Spec.Replicas)
 	require.NotNil(t, mxs.Spec.KubernetesService)
 	assert.Equal(t, corev1.ServiceTypeLoadBalancer, mxs.Spec.KubernetesService.Type)
-	assert.Len(t, mxs.Spec.Servers, 1, "operator-defaulted servers must be preserved")
-	assert.Equal(t, mariadbv1alpha1.MonitorModuleMariadb, mxs.Spec.Monitor.Module)
-	require.NotNil(t, mxs.Spec.TLS)
-	assert.True(t, mxs.Spec.TLS.Enabled, "TLS follows the engine's enforcement")
-	assert.Equal(t, "test-ca-bundle", mxs.Spec.TLS.ServerCASecretRef.Name)
+	assert.Equal(t, &mariadbv1alpha1.MaxScaleTLS{Enabled: true}, mxs.Spec.TLS, "TLS follows the engine's enforcement")
 }
 
-func TestApplyMaxScaleTLSOverlay(t *testing.T) {
-	mxs := &mariadbv1alpha1.MaxScale{}
-	applyMaxScaleTLSOverlay(mxs, false)
-	assert.Nil(t, mxs.Spec.TLS)
+// The applied body must only carry fields the provider set, so operator
+// defaults (monitor interval and module, servers, services, ...) stay with it.
+func TestDesiredMaxScale_OnlyDeclaresProviderFields(t *testing.T) {
+	c := newProxyContext(t, "replication", "", `{"enabled":true}`)
+	desired, err := desiredMaxScale(c)
+	require.NoError(t, err)
+	obj, err := toApplyObject(c, desired)
+	require.NoError(t, err)
+	pruneMaxScaleZeroDefaults(obj.Object)
 
-	applyMaxScaleTLSOverlay(mxs, true)
-	require.NotNil(t, mxs.Spec.TLS)
-	assert.True(t, mxs.Spec.TLS.Enabled)
-
-	applyMaxScaleTLSOverlay(mxs, false)
-	require.NotNil(t, mxs.Spec.TLS)
-	assert.False(t, mxs.Spec.TLS.Enabled)
+	assertNoEmptyStrings(t, obj.Object, "")
+	spec := obj.Object["spec"].(map[string]any)
+	assert.Equal(t, map[string]any{"params": map[string]any{
+		"auto_failover":                "false",
+		"auto_rejoin":                  "false",
+		"switchover_on_low_disk_space": "false",
+	}}, spec["monitor"])
+	assert.Equal(t, map[string]any{"enabled": false}, spec["tls"])
+	for _, operatorField := range []string{"servers", "services", "admin", "auth", "config"} {
+		assert.NotContains(t, spec, operatorField)
+	}
 }
 
 func TestSyncMaxScale_DisabledDeletes(t *testing.T) {
@@ -179,22 +178,6 @@ func TestSyncMaxScale_DisabledDeletes(t *testing.T) {
 
 	// Idempotent when already gone.
 	require.NoError(t, SyncMaxScale(c))
-}
-
-func TestApplyMaxScaleMonitorOverlay(t *testing.T) {
-	mxs := &mariadbv1alpha1.MaxScale{}
-	applyMaxScaleMonitorOverlay(mxs)
-	assert.Equal(t, map[string]string{
-		"auto_failover":                "false",
-		"auto_rejoin":                  "false",
-		"switchover_on_low_disk_space": "false",
-	}, mxs.Spec.Monitor.Params)
-
-	// Operator defaults and user tuning of other parameters are preserved.
-	mxs.Spec.Monitor.Params = map[string]string{"auto_failover": "true", "failcount": "3"}
-	applyMaxScaleMonitorOverlay(mxs)
-	assert.Equal(t, "false", mxs.Spec.Monitor.Params["auto_failover"])
-	assert.Equal(t, "3", mxs.Spec.Monitor.Params["failcount"])
 }
 
 func TestSyncMaxScale_MonitorParamsOnlyForReplication(t *testing.T) {

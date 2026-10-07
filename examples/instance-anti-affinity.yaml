@@ -1,12 +1,17 @@
-# Example Instance with pod anti-affinity and node affinity.
+# Example Instance with pod anti-affinity, node affinity, tolerations and
+# topology spread.
 #
 # The engine component accepts a standard Kubernetes affinity under
 # `spec.components.engine.schedulingPolicy.affinity`. The provider maps it onto the
-# mariadb-operator's affinity configuration.
+# mariadb-operator's affinity configuration; setting it replaces the provider's
+# default soft anti-affinity for HA topologies.
 #
 # Supported: `nodeAffinity` and `podAntiAffinity`.
 # Not supported: `podAffinity` (rejected at admission — the operator cannot
 # express pod co-location).
+#
+# A topology spread constraint without a labelSelector counts this instance's
+# MariaDB pods.
 apiVersion: core.openeverest.io/v1alpha1
 kind: Instance
 metadata:
@@ -46,3 +51,14 @@ spec:
                       operator: In
                       values:
                         - ssd
+        # Allow scheduling onto nodes reserved for databases.
+        tolerations:
+          - key: dedicated
+            operator: Equal
+            value: database
+            effect: NoSchedule
+        # Spread the pods evenly across zones.
+        topologySpreadConstraints:
+          - maxSkew: 1
+            topologyKey: topology.kubernetes.io/zone
+            whenUnsatisfiable: ScheduleAnyway

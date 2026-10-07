@@ -10,3 +10,10 @@ spec:
   replicas: 2
   mariaDbRef:
     name: test-maxscale
+  tls:
+    enabled: false
+  podMetadata:
+    labels:
+      core.openeverest.io/component: proxy
+      core.openeverest.io/instance: test-maxscale
+      core.openeverest.io/provider: mariadb

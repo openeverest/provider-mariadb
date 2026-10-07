@@ -54,21 +54,6 @@ func defaultReplicas(c *controller.Context) int32 {
 	}
 }
 
-// applyGaleraOverlay enables Galera on the MariaDB spec while preserving the
-// operator-defaulted Galera sub-fields (SST, recovery, agent/init images, ...)
-// across reconciles. Topology is immutable, so this only ever turns Galera on;
-// standalone instances are left untouched.
-func applyGaleraOverlay(mariadb *mariadbv1alpha1.MariaDB, galera bool) {
-	if !galera {
-		return
-	}
-	if mariadb.Spec.Galera == nil {
-		mariadb.Spec.Galera = &mariadbv1alpha1.Galera{Enabled: true}
-		return
-	}
-	mariadb.Spec.Galera.Enabled = true
-}
-
 // defaultHAAffinity returns a soft (preferred) pod anti-affinity that spreads
 // MariaDB pods across nodes for HA without blocking scheduling on clusters with
 // fewer nodes than replicas. It is applied only when the user provides no

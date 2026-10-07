@@ -67,7 +67,8 @@ func buildMetrics(c *controller.Context) (*mariadbv1alpha1.MariadbMetrics, error
 	metrics := &mariadbv1alpha1.MariadbMetrics{
 		Enabled: true,
 		Exporter: mariadbv1alpha1.Exporter{
-			Image: image,
+			Image:       image,
+			PodMetadata: &mariadbv1alpha1.Metadata{Labels: c.PodLabels(common.ComponentMonitoring)},
 		},
 		ServiceMonitor: mariadbv1alpha1.ServiceMonitor{
 			PrometheusRelease: params.ServiceMonitor.PrometheusRelease,
@@ -88,28 +89,7 @@ func buildMetrics(c *controller.Context) (*mariadbv1alpha1.MariadbMetrics, error
 	return metrics, nil
 }
 
-// applyMetricsOverlay writes the provider-managed metrics fields onto the
-// operator's existing MariaDB spec without discarding the fields the operator
-// defaults on its own (Exporter.Port, Username, PasswordSecretKeyRef, ...).
-// Replacing spec.metrics wholesale would reset those defaults every reconcile,
-// producing an endless diff/update loop (and resourceVersion conflicts) against
-// the operator. When metrics is nil the whole block is cleared so the operator
-// tears the exporter down.
-func applyMetricsOverlay(mariadb *mariadbv1alpha1.MariaDB, metrics *mariadbv1alpha1.MariadbMetrics) {
-	if metrics == nil {
-		mariadb.Spec.Metrics = nil
-		return
-	}
-	if mariadb.Spec.Metrics == nil {
-		mariadb.Spec.Metrics = metrics
-		return
-	}
-	mariadb.Spec.Metrics.Enabled = metrics.Enabled
-	mariadb.Spec.Metrics.Exporter.Image = metrics.Exporter.Image
-	mariadb.Spec.Metrics.Exporter.Resources = metrics.Exporter.Resources
-	mariadb.Spec.Metrics.ServiceMonitor = metrics.ServiceMonitor
-}
-
+// resolveExporterImage returns the mysqld-exporter image from the monitoring
 // component override, its selected version, or the provider default — mirroring
 // the engine image resolution precedence.
 func resolveExporterImage(c *controller.Context) (string, error) {

@@ -15,8 +15,6 @@
 package provider
 
 import (
-	mariadbv1alpha1 "github.com/mariadb-operator/mariadb-operator/v26/api/v1alpha1"
-
 	"github.com/openeverest/openeverest/v2/provider-runtime/controller"
 
 	"github.com/openeverest/provider-mariadb/definition"
@@ -36,19 +34,4 @@ func isReplicationTopology(c *controller.Context) bool {
 // resolution and the default pod anti-affinity.
 func isHATopology(c *controller.Context) bool {
 	return isGaleraTopology(c) || isReplicationTopology(c)
-}
-
-// applyReplicationOverlay enables replication on the MariaDB spec while preserving
-// the operator-defaulted replication sub-fields (primary index, replica settings,
-// agent/init images, ...) across reconciles. Topology is immutable, so this only
-// ever turns replication on; other topologies are left untouched.
-func applyReplicationOverlay(mariadb *mariadbv1alpha1.MariaDB, replication bool) {
-	if !replication {
-		return
-	}
-	if mariadb.Spec.Replication == nil {
-		mariadb.Spec.Replication = &mariadbv1alpha1.Replication{Enabled: true}
-		return
-	}
-	mariadb.Spec.Replication.Enabled = true
 }

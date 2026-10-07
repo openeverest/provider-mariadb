@@ -110,18 +110,6 @@ func buildTLS(c *controller.Context) (*mariadbv1alpha1.TLS, error) {
 	return tls, nil
 }
 
-// applyTLSOverlay changes only the fields owned by this provider and preserves
-// operator-defaulted or user-managed CA, certificate, and issuer references.
-func applyTLSOverlay(mdb *mariadbv1alpha1.MariaDB, desired *mariadbv1alpha1.TLS) {
-	if mdb.Spec.TLS == nil {
-		mdb.Spec.TLS = desired
-		return
-	}
-	mdb.Spec.TLS.Enabled = desired.Enabled
-	mdb.Spec.TLS.Required = desired.Required
-	mdb.Spec.TLS.GaleraSSTEnabled = desired.GaleraSSTEnabled
-}
-
 func tlsCABundleSecretName(instanceName string) string {
 	return instanceName + tlsCABundleSuffix
 }
