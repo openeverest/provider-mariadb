@@ -47,6 +47,11 @@ func ValidateMariaDB(c *controller.Context) error {
 		return fmt.Errorf("monitoring validation: %w", err)
 	}
 
+	if err := validateProxy(c); err != nil {
+		l.Error(err, "Proxy validation failed", "name", c.Name())
+		return fmt.Errorf("proxy validation: %w", err)
+	}
+
 	if err := validateTopology(c); err != nil {
 		l.Error(err, "Topology validation failed", "name", c.Name())
 		return fmt.Errorf("topology validation: %w", err)
@@ -112,6 +117,46 @@ func validateMonitoring(c *controller.Context) error {
 	return nil
 }
 
+// validateProxy checks the proxy component when MaxScale is enabled: it needs
+// an HA topology to front, at least one replica, a supported Service type and
+// a resolvable image.
+func validateProxy(c *controller.Context) error {
+	enabled, err := isProxyEnabled(c)
+	if err != nil || !enabled {
+		return err
+	}
+	if !isHATopology(c) {
+		return fmt.Errorf(
+			"the %q component is only supported on the %q and %q topologies",
+			common.ComponentProxy,
+			definition.TopologyTypeGalera,
+			definition.TopologyTypeReplication,
+		)
+	}
+
+	proxy := c.Instance().Spec.Components[common.ComponentProxy]
+	if proxy.Replicas != nil && *proxy.Replicas < 1 {
+		return fmt.Errorf("proxy replicas must be at least 1, got %d", *proxy.Replicas)
+	}
+	if err := validateService(common.ComponentProxy, proxy.Service); err != nil {
+		return err
+	}
+	if proxy.SchedulingPolicy != nil {
+		if err := validateAffinity(proxy.SchedulingPolicy.Affinity); err != nil {
+			return err
+		}
+	}
+
+	image, err := resolveMaxScaleImage(c)
+	if err != nil {
+		return err
+	}
+	if image == "" {
+		return fmt.Errorf("unable to resolve a MaxScale image for the %q component", common.ComponentProxy)
+	}
+	return nil
+}
+
 // validateComponents verifies that required components are present and their values are sane.
 func validateComponents(c *controller.Context) error {
 	engine, ok := c.Instance().Spec.Components[common.ComponentEngine]
@@ -129,7 +174,7 @@ func validateComponents(c *controller.Context) error {
 		}
 	}
 
-	if err := validateService(engine.Service); err != nil {
+	if err := validateService(common.ComponentEngine, engine.Service); err != nil {
 		return err
 	}
 
@@ -169,7 +214,7 @@ func validateNodeAffinity(c *controller.Context, engine corev1alpha1.ComponentSp
 }
 
 // validateService ensures the requested Service type is one the operator supports.
-func validateService(svc *corev1alpha1.Service) error {
+func validateService(componentName string, svc *corev1alpha1.Service) error {
 	if svc == nil || svc.ServiceType == "" {
 		return nil
 	}
@@ -182,7 +227,7 @@ func validateService(svc *corev1alpha1.Service) error {
 	default:
 		return fmt.Errorf(
 			"spec.components.%s.service.serviceType must be one of ClusterIP, LoadBalancer or NodePort",
-			common.ComponentEngine,
+			componentName,
 		)
 	}
 }

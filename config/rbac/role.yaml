@@ -123,6 +123,7 @@ rules:
   resources:
   - backups
   - mariadbs
+  - maxscales
   - physicalbackups
   - pointintimerecoveries
   - restores
@@ -139,6 +140,7 @@ rules:
   resources:
   - backups/status
   - mariadbs/status
+  - maxscales/status
   - physicalbackups/status
   - pointintimerecoveries/status
   - restores/status

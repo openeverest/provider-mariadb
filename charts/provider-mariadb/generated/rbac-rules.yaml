@@ -114,6 +114,7 @@
   resources:
     - backups
     - mariadbs
+    - maxscales
     - physicalbackups
     - pointintimerecoveries
     - restores
@@ -130,6 +131,7 @@
   resources:
     - backups/status
     - mariadbs/status
+    - maxscales/status
     - physicalbackups/status
     - pointintimerecoveries/status
     - restores/status

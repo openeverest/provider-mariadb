@@ -1,0 +1,220 @@
+---
+# MaxScale proxy suite.
+#
+# Provisions a real 3-node replication cluster fronted by MaxScale through the
+# bundled mariadb-operator, verifies that a client can authenticate through the
+# MaxScale Service using the credentials published in the connection Secret,
+# disables and re-enables the proxy, then fails the primary and checks that
+# writes through MaxScale resume on the operator-promoted primary. Finally it
+# tears the Instance down.
+apiVersion: chainsaw.kyverno.io/v1alpha1
+kind: Test
+metadata:
+  name: maxscale
+spec:
+  description: |
+    Create a replication Instance with the MaxScale proxy enabled, connect
+    through MaxScale with the generated login/password, toggle the proxy off
+    and on, fail the primary, then delete the Instance.
+
+  # Collect diagnostics when a step fails.
+  catch:
+    - script:
+        content: kubectl -n $NAMESPACE get instance,mariadb,maxscale,pods,svc -o wide
+    - script:
+        content: kubectl -n $NAMESPACE get mariadb,maxscale -o yaml
+    # read_only and replication state per server show whether a new primary
+    # was promoted and left writable (#37).
+    - script:
+        content: |
+          pass=$(kubectl -n $NAMESPACE get secret everest-secrets-test-maxscale-root -o jsonpath='{.data.root-password}' | base64 -d)
+          for i in 0 1 2; do
+            echo "=== test-maxscale-$i"
+            kubectl -n $NAMESPACE exec test-maxscale-$i -c mariadb -- env MYSQL_PWD="$pass" \
+              mariadb -uroot -e "SELECT @@read_only, @@gtid_current_pos; SHOW ALL SLAVES STATUS\G" || true
+          done
+    - script:
+        content: kubectl -n $NAMESPACE logs -l app.kubernetes.io/name=maxscale --tail 200 --prefix || true
+    - script:
+        content: |
+          kubectl logs -A -l app.kubernetes.io/name=operator --tail 300 --prefix \
+            | grep -E 'test-maxscale|readonly|read_only|primary|MaxScale' | tail -150 || true
+    - script:
+        content: |
+          ns=$(kubectl get deploy -A -l app.kubernetes.io/name=provider-mariadb \
+            -o jsonpath='{.items[0].metadata.namespace}')
+          [ -n "$ns" ] && kubectl -n "$ns" logs -l app.kubernetes.io/name=provider-mariadb \
+            --all-containers --tail 100 || echo "provider deployment not found"
+
+  steps:
+    - name: provider-deployed
+      try:
+        - script:
+            content: |
+              set -eu
+              avail=$(kubectl get deploy -A -l app.kubernetes.io/name=provider-mariadb \
+                -o jsonpath='{.items[*].status.availableReplicas}')
+              echo "provider available replicas: ${avail:-0}"
+              echo "${avail}" | grep -q '[1-9]'
+
+    - name: create-instance
+      try:
+        - apply:
+            file: 10-create-instance.yaml
+        - assert:
+            file: 10-assert.yaml
+
+    # Bootstrapping the replication cluster and then MaxScale takes a while.
+    - name: cluster-running
+      timeouts:
+        assert: 15m
+      try:
+        - assert:
+            file: 11-assert.yaml
+
+    # Authenticate through the MaxScale Service with the credentials published
+    # in the connection Secret, and prove the query was routed by MaxScale.
+    - name: connect
+      timeouts:
+        exec: 3m
+      try:
+        - script:
+            content: |
+              set -eu
+              secret="test-maxscale-conn"
+              pass=$(kubectl -n "$NAMESPACE" get secret "$secret" -o jsonpath='{.data.password}' | base64 -d)
+              if [ -z "$pass" ]; then
+                echo "FAIL: connection secret '$secret' has an empty password" >&2
+                exit 1
+              fi
+
+              kubectl -n "$NAMESPACE" run mariadb-maxscale-conn-check \
+                --rm -i --restart=Never \
+                --image=mariadb:12.3 \
+                --overrides='{
+                  "spec": {
+                    "containers": [{
+                      "name": "mariadb-maxscale-conn-check",
+                      "image": "mariadb:12.3",
+                      "command": ["sh", "-c"],
+                      "args": ["set -eu; mariadb -h \"$DB_HOST\" -P \"$DB_PORT\" -u \"$DB_USER\" -D everest -e \"CREATE TABLE IF NOT EXISTS t (id INT PRIMARY KEY); REPLACE INTO t VALUES (1); SELECT COUNT(*) FROM t;\""],
+                      "env": [
+                        {"name": "DB_HOST", "valueFrom": {"secretKeyRef": {"name": "test-maxscale-conn", "key": "host"}}},
+                        {"name": "DB_PORT", "valueFrom": {"secretKeyRef": {"name": "test-maxscale-conn", "key": "port"}}},
+                        {"name": "DB_USER", "valueFrom": {"secretKeyRef": {"name": "test-maxscale-conn", "key": "username"}}},
+                        {"name": "MYSQL_PWD", "valueFrom": {"secretKeyRef": {"name": "test-maxscale-conn", "key": "password"}}}
+                      ]
+                    }]
+                  }
+                }'
+
+    # Disabling the proxy removes MaxScale and repoints the connection details
+    # at the primary Service.
+    - name: disable-proxy
+      timeouts:
+        assert: 5m
+      try:
+        - patch:
+            file: 20-disable-proxy.yaml
+        - wait:
+            apiVersion: k8s.mariadb.com/v1alpha1
+            kind: MaxScale
+            name: test-maxscale-maxscale
+            timeout: 3m
+            for:
+              deletion: {}
+        - assert:
+            file: 21-assert.yaml
+
+    # Enabling the proxy on an existing cluster brings MaxScale back and
+    # repoints the connection details at it.
+    - name: enable-proxy
+      timeouts:
+        assert: 10m
+      try:
+        - patch:
+            file: 22-enable-proxy.yaml
+        - assert:
+            file: 11-assert.yaml
+
+    # Take the primary down for real: the operator must promote another server
+    # and MaxScale must route writes to it. A promoted primary left read-only
+    # (#37) fails the write loop below. Cordoning keeps the recreated Pod Pending
+    # (its PVC is node-local); a plain delete restarts it faster than failure
+    # detection, so no failover would happen. This step runs last: the failed
+    # primary does not rejoin on its own (see 30-assert.yaml).
+    - name: primary-failover
+      timeouts:
+        exec: 10m
+        assert: 10m
+      try:
+        - script:
+            content: |
+              set -eu
+              mxs=test-maxscale-maxscale
+              old=$(kubectl -n "$NAMESPACE" get maxscale "$mxs" -o jsonpath='{.status.primaryServer}')
+              test -n "$old"
+              node=$(kubectl -n "$NAMESPACE" get pod "$old" -o jsonpath='{.spec.nodeName}')
+              echo "cordoning $node and deleting primary pod $old"
+              kubectl cordon "$node"
+              kubectl -n "$NAMESPACE" delete pod "$old" --wait=false
+
+              new=""
+              for _ in $(seq 1 60); do
+                new=$(kubectl -n "$NAMESPACE" get maxscale "$mxs" -o jsonpath='{.status.primaryServer}')
+                if [ -n "$new" ] && [ "$new" != "$old" ]; then break; fi
+                sleep 5
+              done
+              if [ -z "$new" ] || [ "$new" = "$old" ]; then
+                echo "FAIL: MaxScale reports no new primary (still '$new')" >&2
+                exit 1
+              fi
+              echo "new primary: $new"
+
+              kubectl -n "$NAMESPACE" run mariadb-maxscale-failover-check \
+                --rm -i --restart=Never \
+                --image=mariadb:12.3 \
+                --overrides='{
+                  "spec": {
+                    "containers": [{
+                      "name": "mariadb-maxscale-failover-check",
+                      "image": "mariadb:12.3",
+                      "command": ["sh", "-c"],
+                      "args": ["for i in $(seq 1 36); do mariadb -h \"$DB_HOST\" -P \"$DB_PORT\" -u \"$DB_USER\" -D everest -e \"REPLACE INTO t VALUES (2)\" && echo write-ok && exit 0; sleep 5; done; echo \"FAIL: no writable primary behind MaxScale\" >&2; exit 1"],
+                      "env": [
+                        {"name": "DB_HOST", "valueFrom": {"secretKeyRef": {"name": "test-maxscale-conn", "key": "host"}}},
+                        {"name": "DB_PORT", "valueFrom": {"secretKeyRef": {"name": "test-maxscale-conn", "key": "port"}}},
+                        {"name": "DB_USER", "valueFrom": {"secretKeyRef": {"name": "test-maxscale-conn", "key": "username"}}},
+                        {"name": "MYSQL_PWD", "valueFrom": {"secretKeyRef": {"name": "test-maxscale-conn", "key": "password"}}}
+                      ]
+                    }]
+                  }
+                }'
+        - assert:
+            file: 30-assert.yaml
+      finally:
+        - script:
+            content: |
+              kubectl get nodes --field-selector spec.unschedulable=true -o name | xargs -r kubectl uncordon
+
+    - name: delete-instance
+      try:
+        - delete:
+            ref:
+              apiVersion: core.openeverest.io/v1alpha1
+              kind: Instance
+              name: test-maxscale
+        - wait:
+            apiVersion: core.openeverest.io/v1alpha1
+            kind: Instance
+            name: test-maxscale
+            timeout: 2m
+            for:
+              deletion: {}
+        - wait:
+            apiVersion: k8s.mariadb.com/v1alpha1
+            kind: MariaDB
+            name: test-maxscale
+            timeout: 3m
+            for:
+              deletion: {}
