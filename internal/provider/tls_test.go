@@ -46,7 +46,7 @@ func newTLSContext(t *testing.T, topology, params string, objs ...client.Object)
 		t.Fatalf("add MariaDB scheme: %v", err)
 	}
 
-	engine := corev1alpha1.ComponentSpec{Name: common.ComponentEngine, Type: common.ComponentTypeMariaDB}
+	engine := corev1alpha1.ComponentSpec{Type: common.ComponentTypeMariaDB}
 	if params != "" {
 		engine.Parameters = &runtime.RawExtension{Raw: []byte(params)}
 	}

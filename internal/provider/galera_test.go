@@ -51,7 +51,7 @@ func newTopologyContext(t *testing.T, topology string, replicas *int32, objs ...
 		ObjectMeta: metav1.ObjectMeta{Name: "test", Namespace: "default"},
 		Spec: corev1alpha1.InstanceSpec{
 			Components: map[string]corev1alpha1.ComponentSpec{
-				common.ComponentEngine: {Name: common.ComponentEngine, Type: common.ComponentTypeMariaDB, Replicas: replicas},
+				common.ComponentEngine: {Type: common.ComponentTypeMariaDB, Replicas: replicas},
 			},
 		},
 	}
@@ -122,7 +122,6 @@ func newEngineParamsContext(t *testing.T, params string, affinity *corev1.Affini
 	}
 
 	engine := corev1alpha1.ComponentSpec{
-		Name:             common.ComponentEngine,
 		Type:             common.ComponentTypeMariaDB,
 		SchedulingPolicy: &commonv1alpha1.SchedulingPolicy{Affinity: affinity},
 	}
