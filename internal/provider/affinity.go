@@ -24,6 +24,18 @@ import (
 	"github.com/openeverest/provider-mariadb/internal/common"
 )
 
+// buildAffinity returns the engine's affinity or, for HA topologies, the default
+// soft pod anti-affinity. A set affinity replaces the default, so {} sets none.
+func buildAffinity(raw *corev1.Affinity, ha bool, instanceName string) *mariadbv1alpha1.AffinityConfig {
+	if raw != nil {
+		return convertAffinity(raw)
+	}
+	if ha {
+		return defaultHAAffinity(instanceName)
+	}
+	return nil
+}
+
 // convertAffinity maps a standard Kubernetes corev1.Affinity supplied on the
 // Instance's engine component onto the mariadb-operator's AffinityConfig.
 //

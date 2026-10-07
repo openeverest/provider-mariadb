@@ -23,8 +23,6 @@ spec:
           properties:
             configuration:
               type: string
-            nodeAffinity:
-              type: string
             tls:
               properties:
                 enabled:

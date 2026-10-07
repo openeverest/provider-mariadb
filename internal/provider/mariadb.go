@@ -177,14 +177,10 @@ func desiredMariaDB(c *controller.Context) (*mariadbv1alpha1.MariaDB, error) {
 	}
 
 	// The user's affinity, or for HA topologies a soft pod anti-affinity that
-	// spreads nodes without blocking scheduling, plus node-targeting rules.
-	// AntiAffinityEnabled stays unset so the operator does not default a
-	// competing affinity.
+	// spreads nodes without blocking scheduling. AntiAffinityEnabled stays unset
+	// so the operator does not default a competing affinity.
 	scheduling := ptr.Deref(engine.SchedulingPolicy, commonv1alpha1.SchedulingPolicy{})
-	affinity, err := buildAffinity(scheduling.Affinity, params.NodeAffinity, ha, c.Name())
-	if err != nil {
-		return nil, fmt.Errorf("build affinity: %w", err)
-	}
+	affinity := buildAffinity(scheduling.Affinity, ha, c.Name())
 
 	// Only the TLS switches are declared, so the operator's generated
 	// certificate and CA references stay with the operator.

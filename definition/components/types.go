@@ -33,14 +33,6 @@ type MariadbParameters struct {
 	// the content is passed verbatim to the operator's spec.myCnf field.
 	// +optional
 	Configuration string `json:"configuration,omitempty"`
-	// NodeAffinity restricts engine pods to nodes whose labels match the given rules,
-	// one rule per line: "<key> <operator> [<value>,<value>...]" where operator is
-	// In, NotIn, Exists or DoesNotExist (In/NotIn require values; Exists/DoesNotExist
-	// take none). All rules are combined (AND) into a single required node affinity term.
-	// Mutually exclusive with spec.components.engine.schedulingPolicy.affinity.nodeAffinity.
-	// Deprecated: set spec.components.engine.schedulingPolicy.affinity.nodeAffinity instead.
-	// +optional
-	NodeAffinity string `json:"nodeAffinity,omitempty"`
 	// TLS configures transport encryption for MariaDB. TLS is enabled by
 	// default when this block or its enabled field is omitted.
 	// +optional

@@ -1,9 +1,7 @@
 # Example Instance restricting engine pods to nodes with specific labels.
 #
 # `spec.components.engine.schedulingPolicy.affinity.nodeAffinity` takes a
-# standard Kubernetes node affinity. The equivalent deprecated form is the
-# `spec.components.engine.parameters.nodeAffinity` rules list
-# ("disktype In ssd,nvme" / "gpu Exists"); the two are mutually exclusive.
+# standard Kubernetes node affinity.
 apiVersion: core.openeverest.io/v1alpha1
 kind: Instance
 metadata:
