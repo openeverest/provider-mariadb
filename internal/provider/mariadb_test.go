@@ -53,7 +53,7 @@ func newSyncHarness(t *testing.T, topology string, components map[string]corev1a
 	require.NoError(t, mariadbv1alpha1.AddToScheme(scheme))
 
 	all := map[string]corev1alpha1.ComponentSpec{
-		common.ComponentEngine: {Name: common.ComponentEngine, Type: common.ComponentTypeMariaDB, Image: "mariadb:12.3"},
+		common.ComponentEngine: {Type: common.ComponentTypeMariaDB, Image: "mariadb:12.3"},
 	}
 	for name, comp := range components {
 		all[name] = comp
@@ -102,7 +102,6 @@ func monitoringComponent(enabled bool) map[string]corev1alpha1.ComponentSpec {
 	}
 	return map[string]corev1alpha1.ComponentSpec{
 		common.ComponentMonitoring: {
-			Name:       common.ComponentMonitoring,
 			Type:       common.ComponentMonitoring,
 			Image:      "prom/mysqld-exporter:test",
 			Parameters: &runtime.RawExtension{Raw: []byte(raw)},
@@ -133,6 +132,24 @@ func TestSyncMariaDB_StopsDeclaringMetricsWhenMonitoringDisabled(t *testing.T) {
 	h.Instance().Spec.Components[common.ComponentMonitoring] = monitoringComponent(false)[common.ComponentMonitoring]
 	require.NoError(t, SyncMariaDB(h.Context))
 	assert.NotContains(t, h.lastSpec(t), "metrics", "omitting spec.metrics makes the apply remove it")
+}
+
+func TestSyncMariaDB_LabelsComponentPods(t *testing.T) {
+	h := newSyncHarness(t, "", monitoringComponent(true))
+	require.NoError(t, SyncMariaDB(h.Context))
+
+	spec := h.lastSpec(t)
+	podLabels := func(component string) map[string]any {
+		return map[string]any{"labels": map[string]any{
+			"core.openeverest.io/component": component,
+			"core.openeverest.io/instance":  "test",
+			"core.openeverest.io/provider":  common.ProviderName,
+		}}
+	}
+	assert.Equal(t, podLabels(common.ComponentEngine), spec["podMetadata"])
+	exporter := spec["metrics"].(map[string]any)["exporter"].(map[string]any)
+	assert.Equal(t, podLabels(common.ComponentMonitoring), exporter["podMetadata"])
+	assert.Equal(t, []string{common.ComponentEngine, common.ComponentMonitoring}, h.LabelledComponents())
 }
 
 func TestSyncMariaDB_KeepsDeclaringImmutableCreationFields(t *testing.T) {

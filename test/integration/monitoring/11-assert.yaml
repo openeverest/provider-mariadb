@@ -6,6 +6,15 @@ metadata:
   name: test-instance-monitoring
 status:
   phase: Ready
+  components:
+    - name: engine
+      selector: core.openeverest.io/component=engine,core.openeverest.io/instance=test-instance-monitoring
+      replicas: 1
+      readyReplicas: 1
+    - name: monitoring
+      selector: core.openeverest.io/component=monitoring,core.openeverest.io/instance=test-instance-monitoring
+      replicas: 1
+      readyReplicas: 1
 ---
 # The mariadb-operator creates a ServiceMonitor named <mariadb>-metrics once
 # the exporter Deployment is ready. Assert that it exists with the expected

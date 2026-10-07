@@ -231,6 +231,8 @@ func desiredMariaDB(c *controller.Context) (*mariadbv1alpha1.MariaDB, error) {
 		},
 	}
 	mdb.Spec.Affinity = affinity
+	// The operator adds these to the pod template only, never to the selectors.
+	mdb.Spec.PodMetadata = &mariadbv1alpha1.Metadata{Labels: c.PodLabels(common.ComponentEngine)}
 	if galera {
 		mdb.Spec.Galera = &mariadbv1alpha1.Galera{Enabled: true}
 	}

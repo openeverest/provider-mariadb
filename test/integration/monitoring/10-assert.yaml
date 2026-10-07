@@ -18,10 +18,20 @@ metadata:
   name: test-instance-monitoring
 spec:
   replicas: 1
+  podMetadata:
+    labels:
+      core.openeverest.io/component: engine
+      core.openeverest.io/instance: test-instance-monitoring
+      core.openeverest.io/provider: mariadb
   metrics:
     enabled: true
     exporter:
       image: prom/mysqld-exporter:v0.15.1
+      podMetadata:
+        labels:
+          core.openeverest.io/component: monitoring
+          core.openeverest.io/instance: test-instance-monitoring
+          core.openeverest.io/provider: mariadb
     serviceMonitor:
       prometheusRelease: test
       interval: 30s

@@ -49,5 +49,8 @@ package provider
 // +kubebuilder:rbac:groups="",resources=secrets,verbs=get;list;watch;create;update;patch
 // +kubebuilder:rbac:groups="",resources=services,verbs=get;list;watch
 
+// Pods — the runtime counts the labelled component pods into status.components.
+// +kubebuilder:rbac:groups="",resources=pods,verbs=get;list;watch
+
 // Jobs — mirror scheduled backup runs (CronJob-produced Jobs) into Backup CRs.
 // +kubebuilder:rbac:groups=batch,resources=jobs,verbs=get;list;watch

@@ -67,7 +67,8 @@ func buildMetrics(c *controller.Context) (*mariadbv1alpha1.MariadbMetrics, error
 	metrics := &mariadbv1alpha1.MariadbMetrics{
 		Enabled: true,
 		Exporter: mariadbv1alpha1.Exporter{
-			Image: image,
+			Image:       image,
+			PodMetadata: &mariadbv1alpha1.Metadata{Labels: c.PodLabels(common.ComponentMonitoring)},
 		},
 		ServiceMonitor: mariadbv1alpha1.ServiceMonitor{
 			PrometheusRelease: params.ServiceMonitor.PrometheusRelease,
