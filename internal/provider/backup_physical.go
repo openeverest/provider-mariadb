@@ -50,6 +50,9 @@ func applyPhysicalBackupParameters(spec *mariadbv1alpha1.PhysicalBackupSpec, par
 	if params.Compression != "" {
 		spec.Compression = mariadbv1alpha1.CompressAlgorithm(params.Compression)
 	}
+	if params.CompressionThreads != nil {
+		spec.CompressionThreads = params.CompressionThreads
+	}
 	target := mariadbv1alpha1.PhysicalBackupTargetPreferReplica
 	if params.Target != "" {
 		target = mariadbv1alpha1.PhysicalBackupTarget(params.Target)
