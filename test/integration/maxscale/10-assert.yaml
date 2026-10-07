@@ -1,0 +1,19 @@
+# Expected outcome of the create-instance step.
+#
+# The provider creates a MaxScale CR pointing at the MariaDB. TLS is enabled but
+# not required on the engine, so MaxScale listeners stay plaintext.
+apiVersion: k8s.mariadb.com/v1alpha1
+kind: MaxScale
+metadata:
+  name: test-maxscale-maxscale
+spec:
+  replicas: 2
+  mariaDbRef:
+    name: test-maxscale
+  tls:
+    enabled: false
+  podMetadata:
+    labels:
+      core.openeverest.io/component: proxy
+      core.openeverest.io/instance: test-maxscale
+      core.openeverest.io/provider: mariadb

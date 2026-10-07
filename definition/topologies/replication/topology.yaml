@@ -11,6 +11,8 @@ config:
         replicas: 3
     monitoring:
       optional: true
+    proxy:
+      optional: true
 
 ui:
   sections:
@@ -117,6 +119,43 @@ ui:
       componentsOrder:
         - enabled
 
+    proxy:
+      label: "Proxy"
+      description: "Route client traffic through MariaDB MaxScale, which splits reads and writes across nodes."
+      components:
+        enabled:
+          uiType: toggle
+          path: spec.components.proxy.parameters.enabled
+          fieldParams:
+            label: "Enable MaxScale"
+            defaultValue: false
+        replicas:
+          uiType: number
+          path: spec.components.proxy.replicas
+          fieldParams:
+            label: "Number of proxies"
+            defaultValue: 2
+          validation:
+            min: 1
+            int: true
+        externalAccess:
+          uiType: select
+          path: spec.components.proxy.service.serviceType
+          fieldParams:
+            label: "External access"
+            defaultValue: "ClusterIP"
+            options:
+              - label: "ClusterIP"
+                value: "ClusterIP"
+              - label: "LoadBalancer"
+                value: "LoadBalancer"
+              - label: "NodePort"
+                value: "NodePort"
+      componentsOrder:
+        - enabled
+        - replicas
+        - externalAccess
+
     security:
       label: "Security"
       description: "Configure encryption for MariaDB client traffic."
@@ -208,5 +247,6 @@ ui:
     - databaseVersion
     - resources
     - monitoring
+    - proxy
     - security
     - advanced

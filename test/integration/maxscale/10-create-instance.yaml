@@ -1,0 +1,35 @@
+# A 3-node async replication MariaDB Instance fronted by MaxScale, used by the
+# MaxScale proxy suite.
+apiVersion: core.openeverest.io/v1alpha1
+kind: Instance
+metadata:
+  name: test-maxscale
+spec:
+  providerRef:
+    name: mariadb
+  topology:
+    type: replication
+  components:
+    engine:
+      type: mariadb
+      replicas: 3
+      resources:
+        limits:
+          cpu: "1"
+          memory: 1G
+        requests:
+          cpu: 250m
+          memory: 512M
+      storage:
+        size: 1Gi
+    proxy:
+      replicas: 2
+      parameters:
+        enabled: true
+      resources:
+        limits:
+          cpu: 500m
+          memory: 512M
+        requests:
+          cpu: 100m
+          memory: 256M
