@@ -22,17 +22,23 @@ import (
 	corev1 "k8s.io/api/core/v1"
 )
 
-// buildAffinity assembles the operator's AffinityConfig from the raw engine affinity
-// (an escape hatch for full corev1.Affinity), the parsed node-targeting rules, and the
-// HA default pod anti-affinity. Node targeting is merged with — not a replacement
-// for — the anti-affinity so HA pod spreading is preserved.
+// buildAffinity assembles the operator's AffinityConfig from the engine's
+// schedulingPolicy.affinity and the deprecated node-targeting rules. A set
+// affinity replaces the HA default pod anti-affinity, so an empty one ({})
+// sets no constraints; node-targeting rules are merged into either.
 func buildAffinity(
 	raw *corev1.Affinity,
 	nodeAffinityRules string,
 	ha bool,
 	instanceName string,
 ) (*mariadbv1alpha1.AffinityConfig, error) {
-	cfg := convertAffinity(raw)
+	var cfg *mariadbv1alpha1.AffinityConfig
+	switch {
+	case raw != nil:
+		cfg = convertAffinity(raw)
+	case ha:
+		cfg = defaultHAAffinity(instanceName)
+	}
 
 	if strings.TrimSpace(nodeAffinityRules) != "" {
 		na, err := buildRequiredNodeAffinity(nodeAffinityRules)
@@ -44,18 +50,6 @@ func buildAffinity(
 				cfg = &mariadbv1alpha1.AffinityConfig{}
 			}
 			cfg.NodeAffinity = na
-		}
-	}
-
-	if ha {
-		antiAffinity := defaultHAAffinity(instanceName).PodAntiAffinity
-		switch {
-		case cfg == nil:
-			cfg = &mariadbv1alpha1.AffinityConfig{
-				Affinity: mariadbv1alpha1.Affinity{PodAntiAffinity: antiAffinity},
-			}
-		case cfg.PodAntiAffinity == nil:
-			cfg.PodAntiAffinity = antiAffinity
 		}
 	}
 

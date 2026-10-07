@@ -6,8 +6,24 @@ config:
     engine:
       defaults:
         replicas: 1
+      supportedFields:
+        properties:
+          storage: {}
+          resources: {}
+          replicas: {}
+          service: {}
+          schedulingPolicy:
+            # schedulerName has no MariaDB operator counterpart.
+            properties:
+              affinity: {}
+              nodeSelector: {}
+              tolerations: {}
+              topologySpreadConstraints: {}
     monitoring:
       optional: true
+      supportedFields:
+        properties:
+          resources: {}
 
 ui:
   sections:
@@ -184,23 +200,19 @@ ui:
             multiline: true
             minRows: 3
             maxRows: 8
-        nodeAffinity:
-          uiType: text
-          path: spec.components.engine.parameters.nodeAffinity
-          fieldParams:
-            label: "Node targeting"
-            helperText: "Restrict pods to nodes matching these label rules. One rule per line: '<key> <operator> [values]' (operator: In, NotIn, Exists, DoesNotExist)."
-            placeholder: |
-              disktype In ssd,nvme
-              gpu Exists
-            multiline: true
-            minRows: 2
-            maxRows: 6
+        podSchedulingPolicy:
+          uiType: group
+          groupType: toggleable
+          label: "Pod scheduling policy"
+          components:
+            policy:
+              uiType: widget
+              widgetType: podSchedulingPolicy
       componentsOrder:
         - storageClass
         - externalAccess
         - configuration
-        - nodeAffinity
+        - podSchedulingPolicy
 
   sectionsOrder:
     - databaseVersion

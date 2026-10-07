@@ -30,6 +30,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 	"sigs.k8s.io/controller-runtime/pkg/client/interceptor"
 
+	commonv1alpha1 "github.com/openeverest/openeverest/v2/api/common/v1alpha1"
 	corev1alpha1 "github.com/openeverest/openeverest/v2/api/core/v1alpha1"
 	"github.com/openeverest/openeverest/v2/provider-runtime/controller"
 
@@ -132,6 +133,41 @@ func TestSyncMariaDB_StopsDeclaringMetricsWhenMonitoringDisabled(t *testing.T) {
 	h.Instance().Spec.Components[common.ComponentMonitoring] = monitoringComponent(false)[common.ComponentMonitoring]
 	require.NoError(t, SyncMariaDB(h.Context))
 	assert.NotContains(t, h.lastSpec(t), "metrics", "omitting spec.metrics makes the apply remove it")
+}
+
+func TestDesiredMariaDB_SchedulingPolicy(t *testing.T) {
+	h := newSyncHarness(t, "galera", nil)
+	engine := h.Instance().Spec.Components[common.ComponentEngine]
+	engine.SchedulingPolicy = &commonv1alpha1.SchedulingPolicy{
+		NodeSelector: map[string]string{"disktype": "ssd"},
+		Tolerations:  []corev1.Toleration{{Key: "dedicated", Operator: corev1.TolerationOpExists}},
+		TopologySpreadConstraints: &[]corev1.TopologySpreadConstraint{
+			{MaxSkew: 1, TopologyKey: corev1.LabelTopologyZone, WhenUnsatisfiable: corev1.ScheduleAnyway},
+			{
+				MaxSkew: 1, TopologyKey: corev1.LabelHostname, WhenUnsatisfiable: corev1.DoNotSchedule,
+				LabelSelector: &metav1.LabelSelector{MatchLabels: map[string]string{"app": "custom"}},
+			},
+		},
+	}
+	h.Instance().Spec.Components[common.ComponentEngine] = engine
+
+	mdb, err := desiredMariaDB(h.Context)
+	require.NoError(t, err)
+
+	assert.Equal(t, map[string]string{"disktype": "ssd"}, mdb.Spec.NodeSelector)
+	assert.Equal(t, []corev1.Toleration{{Key: "dedicated", Operator: corev1.TolerationOpExists}}, mdb.Spec.Tolerations)
+	require.Len(t, mdb.Spec.TopologySpreadConstraints, 2)
+	assert.Equal(t, mariadbPodLabels("test"), mdb.Spec.TopologySpreadConstraints[0].LabelSelector.MatchLabels,
+		"a constraint without a selector counts the MariaDB pods")
+	assert.Equal(t, map[string]string{"app": "custom"}, mdb.Spec.TopologySpreadConstraints[1].LabelSelector.MatchLabels)
+	assert.Equal(t, defaultHAAffinity("test"), mdb.Spec.Affinity, "an unset affinity keeps the HA default")
+}
+
+func TestDesiredMariaDB_NoTopologySpreadByDefault(t *testing.T) {
+	h := newSyncHarness(t, "galera", nil)
+	mdb, err := desiredMariaDB(h.Context)
+	require.NoError(t, err)
+	assert.Nil(t, mdb.Spec.TopologySpreadConstraints)
 }
 
 func TestSyncMariaDB_LabelsComponentPods(t *testing.T) {

@@ -70,6 +70,31 @@ func validateAffinity(a *corev1.Affinity) error {
 	return nil
 }
 
+// mariadbPodLabels are the operator's selector labels of the MariaDB pods.
+func mariadbPodLabels(instanceName string) map[string]string {
+	return map[string]string{
+		"app.kubernetes.io/name":     "mariadb",
+		"app.kubernetes.io/instance": instanceName,
+	}
+}
+
+func convertTopologySpreadConstraints(in []corev1.TopologySpreadConstraint) []mariadbv1alpha1.TopologySpreadConstraint {
+	var out []mariadbv1alpha1.TopologySpreadConstraint
+	for _, c := range in {
+		out = append(out, mariadbv1alpha1.TopologySpreadConstraint{
+			MaxSkew:            c.MaxSkew,
+			TopologyKey:        c.TopologyKey,
+			WhenUnsatisfiable:  c.WhenUnsatisfiable,
+			LabelSelector:      c.LabelSelector,
+			MinDomains:         c.MinDomains,
+			NodeAffinityPolicy: c.NodeAffinityPolicy,
+			NodeTaintsPolicy:   c.NodeTaintsPolicy,
+			MatchLabelKeys:     c.MatchLabelKeys,
+		})
+	}
+	return out
+}
+
 func convertNodeAffinity(na *corev1.NodeAffinity) *mariadbv1alpha1.NodeAffinity {
 	out := &mariadbv1alpha1.NodeAffinity{}
 	if na.RequiredDuringSchedulingIgnoredDuringExecution != nil {

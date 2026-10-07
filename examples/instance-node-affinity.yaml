@@ -1,11 +1,9 @@
-# Example Instance using the node-targeting parameter to restrict engine pods to
-# nodes with specific labels.
+# Example Instance restricting engine pods to nodes with specific labels.
 #
-# `spec.components.engine.parameters.nodeAffinity` is a newline-separated list of
-# rules ("<key> <operator> [<value>,<value>...]"; operator: In, NotIn, Exists,
-# DoesNotExist). The provider compiles all rules into a single required node
-# affinity term (AND). This is the form-friendly alternative to setting the full
-# `spec.components.engine.schedulingPolicy.affinity.nodeAffinity` — the two are mutually exclusive.
+# `spec.components.engine.schedulingPolicy.affinity.nodeAffinity` takes a
+# standard Kubernetes node affinity. The equivalent deprecated form is the
+# `spec.components.engine.parameters.nodeAffinity` rules list
+# ("disktype In ssd,nvme" / "gpu Exists"); the two are mutually exclusive.
 apiVersion: core.openeverest.io/v1alpha1
 kind: Instance
 metadata:
@@ -19,7 +17,14 @@ spec:
       replicas: 1
       storage:
         size: 10Gi
-      parameters:
-        nodeAffinity: |
-          disktype In ssd,nvme
-          gpu Exists
+      schedulingPolicy:
+        affinity:
+          nodeAffinity:
+            requiredDuringSchedulingIgnoredDuringExecution:
+              nodeSelectorTerms:
+                - matchExpressions:
+                    - key: disktype
+                      operator: In
+                      values: [ssd, nvme]
+                    - key: gpu
+                      operator: Exists

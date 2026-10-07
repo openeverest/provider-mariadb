@@ -155,3 +155,29 @@ func TestBuildAffinity_ParseErrorPropagates(t *testing.T) {
 		t.Fatal("expected parse error, got nil")
 	}
 }
+
+// A set affinity replaces the HA default; an empty one sets no constraints.
+func TestBuildAffinity_SetAffinityReplacesHADefault(t *testing.T) {
+	got, err := buildAffinity(&corev1.Affinity{}, "", true, "test")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if got != nil {
+		t.Fatalf("expected no affinity for an empty one, got %+v", got)
+	}
+
+	raw := &corev1.Affinity{NodeAffinity: &corev1.NodeAffinity{
+		RequiredDuringSchedulingIgnoredDuringExecution: &corev1.NodeSelector{
+			NodeSelectorTerms: []corev1.NodeSelectorTerm{{
+				MatchExpressions: []corev1.NodeSelectorRequirement{{Key: "disktype", Operator: corev1.NodeSelectorOpExists}},
+			}},
+		},
+	}}
+	got, err = buildAffinity(raw, "", true, "test")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if got == nil || got.NodeAffinity == nil || got.PodAntiAffinity != nil {
+		t.Fatalf("expected only the user's node affinity, got %+v", got)
+	}
+}

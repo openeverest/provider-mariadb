@@ -28,6 +28,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/log"
 
+	commonv1alpha1 "github.com/openeverest/openeverest/v2/api/common/v1alpha1"
 	corev1alpha1 "github.com/openeverest/openeverest/v2/api/core/v1alpha1"
 	"github.com/openeverest/openeverest/v2/provider-runtime/controller"
 
@@ -175,15 +176,12 @@ func desiredMariaDB(c *controller.Context) (*mariadbv1alpha1.MariaDB, error) {
 		return nil, fmt.Errorf("build metrics: %w", err)
 	}
 
-	// Combines the raw affinity escape hatch, node-targeting rules, and — for HA
-	// topologies — a soft pod anti-affinity that spreads nodes without blocking
-	// scheduling. AntiAffinityEnabled stays unset so the operator does not
-	// default a competing affinity.
-	var engineAffinity *corev1.Affinity
-	if engine.SchedulingPolicy != nil {
-		engineAffinity = engine.SchedulingPolicy.Affinity
-	}
-	affinity, err := buildAffinity(engineAffinity, params.NodeAffinity, ha, c.Name())
+	// The user's affinity, or for HA topologies a soft pod anti-affinity that
+	// spreads nodes without blocking scheduling, plus node-targeting rules.
+	// AntiAffinityEnabled stays unset so the operator does not default a
+	// competing affinity.
+	scheduling := ptr.Deref(engine.SchedulingPolicy, commonv1alpha1.SchedulingPolicy{})
+	affinity, err := buildAffinity(scheduling.Affinity, params.NodeAffinity, ha, c.Name())
 	if err != nil {
 		return nil, fmt.Errorf("build affinity: %w", err)
 	}
@@ -231,6 +229,11 @@ func desiredMariaDB(c *controller.Context) (*mariadbv1alpha1.MariaDB, error) {
 		},
 	}
 	mdb.Spec.Affinity = affinity
+	mdb.Spec.NodeSelector = scheduling.NodeSelector
+	mdb.Spec.Tolerations = scheduling.Tolerations
+	mdb.Spec.TopologySpreadConstraints = convertTopologySpreadConstraints(
+		controller.TopologySpreadConstraints(&scheduling, mariadbPodLabels(c.Name())),
+	)
 	// The operator adds these to the pod template only, never to the selectors.
 	mdb.Spec.PodMetadata = &mariadbv1alpha1.Metadata{Labels: c.PodLabels(common.ComponentEngine)}
 	if galera {
