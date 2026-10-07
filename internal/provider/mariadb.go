@@ -196,6 +196,8 @@ func desiredMariaDB(c *controller.Context) (*mariadbv1alpha1.MariaDB, error) {
 		return nil, fmt.Errorf("resolve PITR reference: %w", err)
 	}
 
+	// spec.maxScaleRef is never declared: MaxScale only routes traffic and the
+	// operator keeps owning failover (#37).
 	mdb := &mariadbv1alpha1.MariaDB{
 		ObjectMeta: c.ObjectMeta(c.Name()),
 		Spec: mariadbv1alpha1.MariaDBSpec{
@@ -318,7 +320,23 @@ func StatusMariaDB(c *controller.Context) (controller.Status, error) {
 
 	// Check the Ready condition.
 	if mariadbCR.IsReady() {
-		details, err := buildConnectionDetails(c)
+		proxyEnabled, err := isProxyEnabled(c)
+		if err != nil {
+			return controller.Status{}, err
+		}
+		var mxs *mariadbv1alpha1.MaxScale
+		if proxyEnabled {
+			ready, msg, err := readyMaxScale(c)
+			if err != nil {
+				return controller.Status{}, err
+			}
+			if ready == nil {
+				return controller.Provisioning(msg), nil
+			}
+			mxs = ready
+		}
+
+		details, err := buildConnectionDetails(c, mxs)
 		if err != nil {
 			if errors.Is(err, errTLSCABundleNotReady) {
 				return controller.Provisioning("Waiting for MariaDB TLS CA bundle"), nil
@@ -340,26 +358,42 @@ func StatusMariaDB(c *controller.Context) (controller.Status, error) {
 }
 
 // buildConnectionDetails reads the generated user credentials secret and combines
-// it with the primary Service host to produce a full set of connection details.
-func buildConnectionDetails(c *controller.Context) (controller.ConnectionDetails, error) {
+// it with the client-facing Service host to produce a full set of connection
+// details. When mxs is set, clients are routed through MaxScale; it
+// authenticates them against the same MariaDB users and listens on the same port.
+func buildConnectionDetails(c *controller.Context, mxs *mariadbv1alpha1.MaxScale) (controller.ConnectionDetails, error) {
 	secret := &corev1.Secret{}
 	if err := c.Get(secret, userSecretName(c.Name())); err != nil {
 		return controller.ConnectionDetails{}, fmt.Errorf("get credentials secret: %w", err)
 	}
 
-	host := resolveHost(c)
+	serviceName := c.Name()
+	if isHATopology(c) {
+		serviceName = c.Name() + primaryServiceSuffix
+	}
+	caBundleSecretName := tlsCABundleSecretName(c.Name())
+	var tlsEnabled bool
+	if mxs != nil {
+		serviceName = mxs.Name
+		caBundleSecretName = tlsCABundleSecretName(mxs.Name)
+		tlsEnabled = mxs.IsTLSEnabled()
+	} else {
+		tlsSettings, err := resolveTLSSettings(c)
+		if err != nil {
+			return controller.ConnectionDetails{}, fmt.Errorf("resolve TLS settings: %w", err)
+		}
+		tlsEnabled = tlsSettings.Enabled
+	}
+
+	host := resolveHost(c, serviceName)
 	port := strconv.Itoa(defaultPort)
 	username := defaultInitialUser
 	password := string(secret.Data[userPasswordSecretKey])
 	additionalProperties := map[string]string{}
 
-	tlsSettings, err := resolveTLSSettings(c)
-	if err != nil {
-		return controller.ConnectionDetails{}, fmt.Errorf("resolve TLS settings: %w", err)
-	}
-	if tlsSettings.Enabled {
+	if tlsEnabled {
 		caSecret := &corev1.Secret{}
-		if err := c.Get(caSecret, tlsCABundleSecretName(c.Name())); err != nil {
+		if err := c.Get(caSecret, caBundleSecretName); err != nil {
 			return controller.ConnectionDetails{}, fmt.Errorf("%w: %v", errTLSCABundleNotReady, err)
 		}
 		ca, ok := caSecret.Data[tlsCAKey]
@@ -385,15 +419,10 @@ func buildConnectionDetails(c *controller.Context) (controller.ConnectionDetails
 	}, nil
 }
 
-// resolveHost returns the externally reachable host for the topology's
-// client-facing Service: the primary Service (<name>-primary) for HA topologies,
-// the general Service (<name>) for standalone. It prefers a LoadBalancer ingress
-// address when available, otherwise the internal cluster FQDN.
-func resolveHost(c *controller.Context) string {
-	serviceName := c.Name()
-	if isHATopology(c) {
-		serviceName = c.Name() + primaryServiceSuffix
-	}
+// resolveHost returns the externally reachable host for the given client-facing
+// Service. It prefers a LoadBalancer ingress address when available, otherwise
+// the internal cluster FQDN.
+func resolveHost(c *controller.Context, serviceName string) string {
 	internal := fmt.Sprintf("%s.%s.svc", serviceName, c.Namespace())
 
 	svc := &corev1.Service{}
@@ -414,13 +443,18 @@ func resolveHost(c *controller.Context) string {
 	return internal
 }
 
-// CleanupMariaDB deletes the MariaDB CR when the Instance is being deleted.
-// The MariaDB CR is owned by the Instance (via c.ObjectMeta), so cascaded GC
+// CleanupMariaDB deletes the MaxScale and MariaDB CRs when the Instance is being
+// deleted. Both are owned by the Instance (via c.ObjectMeta), so cascaded GC
 // handles child resources automatically. This explicit delete ensures the operator
 // performs any finalizer-driven cleanup (e.g., releasing PVCs via operator policy).
+// MaxScale goes first so it stops managing the servers before they disappear.
 func CleanupMariaDB(c *controller.Context) error {
 	l := log.FromContext(c.Context())
 	l.Info("Cleaning up MariaDB cluster", "cluster", c.Name())
+
+	if err := teardownMaxScale(c); err != nil {
+		return err
+	}
 
 	mariadbCR := &mariadbv1alpha1.MariaDB{
 		ObjectMeta: metav1.ObjectMeta{

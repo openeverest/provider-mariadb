@@ -152,7 +152,7 @@ func TestBuildConnectionDetailsIncludesTLSCA(t *testing.T) {
 		Data:       map[string][]byte{tlsCAKey: []byte("test-ca")},
 	}
 
-	details, err := buildConnectionDetails(newTLSContext(t, "", "", credentials, caBundle))
+	details, err := buildConnectionDetails(newTLSContext(t, "", "", credentials, caBundle), nil)
 	if err != nil {
 		t.Fatalf("buildConnectionDetails() error = %v", err)
 	}
@@ -167,7 +167,7 @@ func TestBuildConnectionDetailsWaitsForTLSCA(t *testing.T) {
 		ObjectMeta: metav1.ObjectMeta{Name: userSecretName("test"), Namespace: "default"},
 		Data:       map[string][]byte{userPasswordSecretKey: []byte("password")},
 	}
-	_, err := buildConnectionDetails(newTLSContext(t, "", "", credentials))
+	_, err := buildConnectionDetails(newTLSContext(t, "", "", credentials), nil)
 	if !errors.Is(err, errTLSCABundleNotReady) {
 		t.Fatalf("expected errTLSCABundleNotReady, got %v", err)
 	}
@@ -178,7 +178,7 @@ func TestBuildConnectionDetailsOmitsTLSWhenDisabled(t *testing.T) {
 		ObjectMeta: metav1.ObjectMeta{Name: userSecretName("test"), Namespace: "default"},
 		Data:       map[string][]byte{userPasswordSecretKey: []byte("password")},
 	}
-	details, err := buildConnectionDetails(newTLSContext(t, "", `{"tls":{"enabled":false}}`, credentials))
+	details, err := buildConnectionDetails(newTLSContext(t, "", `{"tls":{"enabled":false}}`, credentials), nil)
 	if err != nil {
 		t.Fatalf("buildConnectionDetails() error = %v", err)
 	}

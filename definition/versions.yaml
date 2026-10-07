@@ -17,6 +17,11 @@ componentTypes:
     versions:
     - version: "0.15.1"
       image: prom/mysqld-exporter:v0.15.1
+  maxscale:
+    defaultVersion: "23.08.13"
+    versions:
+    - version: "23.08.13"
+      image: mariadb/maxscale:23.08.13-2
 
 # Version bundles — curated sets of component versions known to work together.
 # Users set spec.version on an Instance to select a bundle.
@@ -27,11 +32,14 @@ versions:
   components:
     engine: "11.4"
     monitoring: "0.15.1"
+    proxy: "23.08.13"
 - name: "11.8"
   components:
     engine: "11.8"
     monitoring: "0.15.1"
+    proxy: "23.08.13"
 - name: "12.3"
   components:
     engine: "12.3"
     monitoring: "0.15.1"
+    proxy: "23.08.13"

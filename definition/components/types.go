@@ -100,3 +100,16 @@ type ServiceMonitorParameters struct {
 	// +optional
 	ScrapeTimeout string `json:"scrapeTimeout,omitempty"`
 }
+
+// MaxScaleParameters defines parameters for the proxy component.
+//
+// The proxy component deploys MariaDB MaxScale in front of a Galera or
+// replication cluster. MaxScale routes writes to the primary and balances reads
+// across replicas; primary failover stays with the mariadb-operator.
+// Client connection details point at MaxScale while it is enabled.
+type MaxScaleParameters struct {
+	// Enabled deploys MaxScale in front of the cluster. Only supported on the
+	// galera and replication topologies. Defaults to false.
+	// +optional
+	Enabled FlexBool `json:"enabled,omitempty"`
+}

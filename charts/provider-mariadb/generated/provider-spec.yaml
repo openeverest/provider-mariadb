@@ -11,6 +11,11 @@ spec:
           version: "11.8"
         - image: mariadb:12.3
           version: "12.3"
+    maxscale:
+      defaultVersion: 23.08.13
+      versions:
+        - image: mariadb/maxscale:23.08.13-2
+          version: 23.08.13
     mysqld-exporter:
       defaultVersion: 0.15.1
       versions:
@@ -55,6 +60,14 @@ spec:
               type: object
           type: object
       type: mysqld-exporter
+    proxy:
+      parametersSchema:
+        openAPIV3Schema:
+          properties:
+            enabled:
+              type: boolean
+          type: object
+      type: maxscale
   defaultVersion: "12.3"
   release:
     version: 0.1.0
@@ -81,6 +94,20 @@ spec:
             openAPIV3Schema:
               properties:
                 resources: {}
+        proxy:
+          optional: true
+          supportedFields:
+            openAPIV3Schema:
+              properties:
+                replicas: {}
+                resources: {}
+                schedulingPolicy:
+                  properties:
+                    affinity: {}
+                    nodeSelector: {}
+                    tolerations: {}
+                    topologySpreadConstraints: {}
+                service: {}
       parametersSchema:
         openAPIV3Schema:
           type: object
@@ -106,6 +133,20 @@ spec:
             openAPIV3Schema:
               properties:
                 resources: {}
+        proxy:
+          optional: true
+          supportedFields:
+            openAPIV3Schema:
+              properties:
+                replicas: {}
+                resources: {}
+                schedulingPolicy:
+                  properties:
+                    affinity: {}
+                    nodeSelector: {}
+                    tolerations: {}
+                    topologySpreadConstraints: {}
+                service: {}
       parametersSchema:
         openAPIV3Schema:
           type: object
@@ -217,6 +258,42 @@ spec:
             - enabled
           description: Expose database metrics and integrate them with a Prometheus stack.
           label: Monitoring
+        proxy:
+          components:
+            enabled:
+              fieldParams:
+                defaultValue: false
+                label: Enable MaxScale
+              path: spec.components.proxy.parameters.enabled
+              uiType: toggle
+            externalAccess:
+              fieldParams:
+                defaultValue: ClusterIP
+                label: External access
+                options:
+                  - label: ClusterIP
+                    value: ClusterIP
+                  - label: LoadBalancer
+                    value: LoadBalancer
+                  - label: NodePort
+                    value: NodePort
+              path: spec.components.proxy.service.serviceType
+              uiType: select
+            replicas:
+              fieldParams:
+                defaultValue: 2
+                label: Number of proxies
+              path: spec.components.proxy.replicas
+              uiType: number
+              validation:
+                int: true
+                min: 1
+          componentsOrder:
+            - enabled
+            - replicas
+            - externalAccess
+          description: Route client traffic through MariaDB MaxScale, which balances connections across nodes.
+          label: Proxy
         resources:
           components:
             nodes:
@@ -329,6 +406,7 @@ spec:
         - databaseVersion
         - resources
         - monitoring
+        - proxy
         - security
         - advanced
     replication:
@@ -416,6 +494,42 @@ spec:
             - enabled
           description: Expose database metrics and integrate them with a Prometheus stack.
           label: Monitoring
+        proxy:
+          components:
+            enabled:
+              fieldParams:
+                defaultValue: false
+                label: Enable MaxScale
+              path: spec.components.proxy.parameters.enabled
+              uiType: toggle
+            externalAccess:
+              fieldParams:
+                defaultValue: ClusterIP
+                label: External access
+                options:
+                  - label: ClusterIP
+                    value: ClusterIP
+                  - label: LoadBalancer
+                    value: LoadBalancer
+                  - label: NodePort
+                    value: NodePort
+              path: spec.components.proxy.service.serviceType
+              uiType: select
+            replicas:
+              fieldParams:
+                defaultValue: 2
+                label: Number of proxies
+              path: spec.components.proxy.replicas
+              uiType: number
+              validation:
+                int: true
+                min: 1
+          componentsOrder:
+            - enabled
+            - replicas
+            - externalAccess
+          description: Route client traffic through MariaDB MaxScale, which splits reads and writes across nodes.
+          label: Proxy
         resources:
           components:
             nodes:
@@ -517,6 +631,7 @@ spec:
         - databaseVersion
         - resources
         - monitoring
+        - proxy
         - security
         - advanced
     standalone:
@@ -712,12 +827,15 @@ spec:
     - components:
         engine: "11.4"
         monitoring: 0.15.1
+        proxy: 23.08.13
       name: "11.4"
     - components:
         engine: "11.8"
         monitoring: 0.15.1
+        proxy: 23.08.13
       name: "11.8"
     - components:
         engine: "12.3"
         monitoring: 0.15.1
+        proxy: 23.08.13
       name: "12.3"

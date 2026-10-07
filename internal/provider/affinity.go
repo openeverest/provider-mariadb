@@ -90,6 +90,14 @@ func mariadbPodLabels(instanceName string) map[string]string {
 	}
 }
 
+// maxScalePodLabels are the operator's selector labels of the MaxScale pods.
+func maxScalePodLabels(maxScaleName string) map[string]string {
+	return map[string]string{
+		"app.kubernetes.io/name":     "maxscale",
+		"app.kubernetes.io/instance": maxScaleName,
+	}
+}
+
 func convertTopologySpreadConstraints(in []corev1.TopologySpreadConstraint) []mariadbv1alpha1.TopologySpreadConstraint {
 	var out []mariadbv1alpha1.TopologySpreadConstraint
 	for _, c := range in {
