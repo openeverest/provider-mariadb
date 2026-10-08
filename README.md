@@ -325,6 +325,7 @@ spec:
 <!-- BEGIN GENERATED: versions -->
 | Version bundle | Default | mariadb |
 |---|---|---|
+| `10.11` | | `10.11` |
 | `11.4` | | `11.4` |
 | `11.8` | | `11.8` |
 | `12.3` | ✅ | `12.3` |
