@@ -5,6 +5,8 @@ spec:
     mariadb:
       defaultVersion: "12.3"
       versions:
+        - image: mariadb:10.11
+          version: "10.11"
         - image: mariadb:11.4
           version: "11.4"
         - image: mariadb:11.8
@@ -824,6 +826,11 @@ spec:
         - security
         - advanced
   versions:
+    - components:
+        engine: "10.11"
+        monitoring: 0.15.1
+        proxy: 23.08.13
+      name: "10.11"
     - components:
         engine: "11.4"
         monitoring: 0.15.1

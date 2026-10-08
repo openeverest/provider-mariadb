@@ -6,6 +6,8 @@ componentTypes:
   mariadb:
     defaultVersion: "12.3"
     versions:
+    - version: "10.11"
+      image: mariadb:10.11
     - version: "11.4"
       image: mariadb:11.4
     - version: "11.8"
@@ -28,6 +30,11 @@ componentTypes:
 # The bundle named by defaultVersion is used when spec.version is omitted.
 defaultVersion: "12.3"
 versions:
+- name: "10.11"
+  components:
+    engine: "10.11"
+    monitoring: "0.15.1"
+    proxy: "23.08.13"
 - name: "11.4"
   components:
     engine: "11.4"
