@@ -213,6 +213,9 @@ func applyLogicalBackupParameters(spec *mariadbv1alpha1.BackupSpec, params maria
 	if params.Compression != "" {
 		spec.Compression = mariadbv1alpha1.CompressAlgorithm(params.Compression)
 	}
+	if params.CompressionThreads != nil {
+		spec.CompressionThreads = params.CompressionThreads
+	}
 }
 
 // SyncRestore creates or updates a mariadb-operator Restore CR that restores

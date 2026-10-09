@@ -20,6 +20,9 @@ spec:
       properties:
         compression:
           type: string
+        compressionThreads:
+          format: int32
+          type: integer
         databases:
           items:
             type: string
@@ -54,8 +57,17 @@ spec:
                 value: gzip
               - label: bzip2
                 value: bzip2
+              - label: zstd
+                value: zstd
           path: parameters.compression
           uiType: select
+        compressionThreads:
+          fieldParams:
+            label: Compression threads (zstd only)
+          path: parameters.compressionThreads
+          uiType: number
+          validation:
+            min: 1
         target:
           fieldParams:
             label: Target pod (physical only)
@@ -80,5 +92,6 @@ spec:
       componentsOrder:
         - type
         - compression
+        - compressionThreads
         - target
       label: Backup configuration
