@@ -198,6 +198,8 @@ off MaxScale's own `auto_failover`, `auto_rejoin` and
 `switchover_on_low_disk_space`, because running failover in both MaxScale and
 the operator races and can leave no writable primary
 ([#37](https://github.com/openeverest/provider-mariadb/issues/37)).
+Replication nodes also boot read-only, so a restarted former primary never
+accepts writes before the operator has demoted it.
 
 > [!IMPORTANT]
 > MaxScale is licensed under the
