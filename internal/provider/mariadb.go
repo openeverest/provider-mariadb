@@ -238,7 +238,12 @@ func desiredMariaDB(c *controller.Context) (*mariadbv1alpha1.MariaDB, error) {
 		mdb.Spec.Galera = &mariadbv1alpha1.Galera{Enabled: true}
 	}
 	if replication {
-		mdb.Spec.Replication = &mariadbv1alpha1.Replication{Enabled: true}
+		mdb.Spec.Replication = &mariadbv1alpha1.Replication{
+			Enabled: true,
+			// A restarted former primary must not boot writable: until the operator
+			// demotes it, writes routed to it would diverge from the new primary.
+			SemiSyncBootAsReplica: ptr.To(true),
+		}
 	}
 
 	// Standalone routes clients to the general Service (<name>); HA topologies

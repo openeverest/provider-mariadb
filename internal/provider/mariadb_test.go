@@ -251,7 +251,7 @@ func TestToApplyObject_OnlyDeclaresProviderFields(t *testing.T) {
 			case "galera":
 				assert.Equal(t, map[string]any{"enabled": true}, spec["galera"])
 			case "replication":
-				assert.Equal(t, map[string]any{"enabled": true}, spec["replication"])
+				assert.Equal(t, map[string]any{"enabled": true, "semiSyncBootAsReplica": true}, spec["replication"])
 			}
 			metrics := spec["metrics"].(map[string]any)
 			assert.NotContains(t, metrics, "passwordSecretKeyRef")
