@@ -7,9 +7,8 @@ $(LOCALBIN):
 CONTAINER_TOOL ?= docker
 
 # OpenEverest ref to use for OpenEverest CRD installation. Pinned to the release
-# tag matching the core version in go.mod. dev.3 carries the Backup CRD change
-# (spec.instanceRef moved under spec.origin).
-OPENEVEREST_BRANCH ?= v2.0.0-dev.3
+# tag matching the core version in go.mod.
+OPENEVEREST_BRANCH ?= v2.0.0-dev.4
 
 # Image URL to use for building/pushing image targets
 IMG ?= ghcr.io/openeverest/provider-mariadb-dev:latest
@@ -167,6 +166,10 @@ test-integration-galera: ## Run Galera HA integration tests.
 .PHONY: test-integration-replication
 test-integration-replication: ## Run async replication HA integration tests.
 	. ./test/vars.sh && chainsaw test --config ./test/integration/.chainsaw.yaml ./test/integration/replication
+
+.PHONY: test-integration-maxscale
+test-integration-maxscale: ## Run MaxScale proxy integration tests.
+	. ./test/vars.sh && chainsaw test --config ./test/integration/.chainsaw.yaml ./test/integration/maxscale
 
 .PHONY: test-integration-backup
 test-integration-backup: ## Run physical backup/restore integration tests (deploys SeaweedFS).

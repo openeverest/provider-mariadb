@@ -43,28 +43,6 @@ func TestIsHATopology(t *testing.T) {
 	}
 }
 
-func TestApplyReplicationOverlay(t *testing.T) {
-	// Non-replication topology: never touches replication.
-	mdb := &mariadbv1alpha1.MariaDB{}
-	applyReplicationOverlay(mdb, false)
-	if mdb.Spec.Replication != nil {
-		t.Errorf("expected nil replication for non-replication topology, got %+v", mdb.Spec.Replication)
-	}
-
-	// Replication on a fresh object: enables it.
-	applyReplicationOverlay(mdb, true)
-	if mdb.Spec.Replication == nil || !mdb.Spec.Replication.Enabled {
-		t.Fatalf("expected replication enabled, got %+v", mdb.Spec.Replication)
-	}
-
-	// Existing replication with operator-defaulted sub-fields: preserved, stays enabled.
-	mdb.Spec.Replication.Primary.PodIndex = ptr.To(2)
-	applyReplicationOverlay(mdb, true)
-	if !mdb.Spec.Replication.Enabled || ptr.Deref(mdb.Spec.Replication.Primary.PodIndex, 0) != 2 {
-		t.Errorf("overlay clobbered operator defaults: %+v", mdb.Spec.Replication)
-	}
-}
-
 func TestValidateTopology_ReplicationReplicas(t *testing.T) {
 	tests := []struct {
 		name     string

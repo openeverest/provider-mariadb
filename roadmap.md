@@ -248,8 +248,10 @@ Both are largely working; this phase closes gaps.
 
 - After any `definition/` or RBAC change: `make generate`, then `make verify`
   (CI fails on uncommitted generated diffs).
-- Keep the read-modify-write discipline in `SyncMariaDB` — never rebuild the whole
-  `MariaDB` spec; overlay only managed fields to avoid endless rolling updates.
+- `SyncMariaDB` server-side applies a freshly built object (`desiredMariaDB`)
+  declaring only provider-owned fields; the operator keeps the ones it defaults.
+  Never apply an object read with `Get`, and keep declaring immutable fields
+  (`bootstrapFrom`, `storageClassName`) so the apply never removes them.
 - New spec/params must be optional with safe defaults (backward compatibility).
 - Add a chainsaw integration suite per phase under `test/integration/`.
 - Follow the MongoDB provider (`provider-percona-server-mongodb/`) for patterns:

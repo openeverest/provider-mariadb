@@ -46,7 +46,9 @@ spec:
           - name: base
             enabled: true
             cron: "0 * * * *"
-            retentionCopies: 24
+            retention:
+              type: time
+              duration: 1d
             parameters:
               type: physical
               compression: gzip

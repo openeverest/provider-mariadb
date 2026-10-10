@@ -17,9 +17,30 @@ package provider
 import (
 	"testing"
 
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
+
+func TestBuildAffinity(t *testing.T) {
+	nodeAffinity := &corev1.Affinity{NodeAffinity: &corev1.NodeAffinity{
+		RequiredDuringSchedulingIgnoredDuringExecution: &corev1.NodeSelector{
+			NodeSelectorTerms: []corev1.NodeSelectorTerm{{
+				MatchExpressions: []corev1.NodeSelectorRequirement{{Key: "disktype", Operator: corev1.NodeSelectorOpExists}},
+			}},
+		},
+	}}
+
+	assert.Nil(t, buildAffinity(nil, false, "test"), "standalone has no default")
+	assert.Equal(t, defaultHAAffinity("test"), buildAffinity(nil, true, "test"), "HA defaults to the soft anti-affinity")
+	assert.Nil(t, buildAffinity(&corev1.Affinity{}, true, "test"), "an empty affinity sets none")
+
+	got := buildAffinity(nodeAffinity, true, "test")
+	require.NotNil(t, got)
+	assert.NotNil(t, got.NodeAffinity)
+	assert.Nil(t, got.PodAntiAffinity, "a set affinity replaces the HA default")
+}
 
 func TestConvertAffinity_Nil(t *testing.T) {
 	if got := convertAffinity(nil); got != nil {

@@ -28,6 +28,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/log"
 
+	commonv1alpha1 "github.com/openeverest/openeverest/v2/api/common/v1alpha1"
 	corev1alpha1 "github.com/openeverest/openeverest/v2/api/core/v1alpha1"
 	"github.com/openeverest/openeverest/v2/provider-runtime/controller"
 
@@ -69,56 +70,91 @@ func rootSecretName(instanceName string) string {
 	return "everest-secrets-" + instanceName + "-root"
 }
 
-// SyncMariaDB creates or updates the MariaDB CR based on the Instance spec.
+// SyncMariaDB server-side applies the MariaDB CR built from the Instance spec.
+// Only the fields the provider owns are declared; the operator keeps owning the
+// ones it defaults. Fields the provider stops declaring are removed.
 func SyncMariaDB(c *controller.Context) error {
 	l := log.FromContext(c.Context())
 	l.Info("Syncing MariaDB cluster", "cluster", c.Name())
 	defer l.Info("MariaDB cluster synced", "cluster", c.Name())
 
-	engine := c.Instance().Spec.Components[common.ComponentEngine]
-
-	// Resolve image from version bundle or provider default.
-	image := ""
-	if engine.Image != "" {
-		image = engine.Image
-	} else {
-		spec, err := c.ProviderSpec()
-		if err != nil {
-			return fmt.Errorf("get provider spec: %w", err)
-		}
-		if engine.Version != "" {
-			image = controller.GetImageForVersion(spec, common.ComponentEngine, engine.Version)
-		}
-		if image == "" {
-			image = controller.GetDefaultImageForComponent(spec, common.ComponentEngine)
-		}
+	desired, err := desiredMariaDB(c)
+	if err != nil {
+		return err
 	}
 
-	// Topology: standalone (default), Galera HA or async replication HA.
+	existing := &mariadbv1alpha1.MariaDB{}
+	err = c.Get(existing, c.Name())
+	switch {
+	case apierrors.IsNotFound(err):
+		// Physical restore is only possible into a fresh MariaDB via
+		// bootstrapFrom, so it is resolved at creation time only.
+		bootstrap, sourceInstance, err := resolvePhysicalBootstrapFrom(c)
+		if err != nil {
+			return err
+		}
+		if bootstrap != nil {
+			// The physical backup embeds the source's credentials; copy them so
+			// the operator does not generate mismatched passwords that would
+			// fail the probes and crash-loop the restored Pods.
+			if err := ensurePhysicalRestoreCredentials(c, sourceInstance); err != nil {
+				return err
+			}
+		}
+		desired.Spec.BootstrapFrom = bootstrap
+	case err != nil:
+		return fmt.Errorf("get MariaDB: %w", err)
+	default:
+		if err := migrateFieldOwnership(c, existing); err != nil {
+			return err
+		}
+		// Immutable once set: keep declaring them so the apply never removes them.
+		desired.Spec.BootstrapFrom = existing.Spec.BootstrapFrom
+		desired.Spec.Storage.StorageClassName = existing.Spec.Storage.StorageClassName
+	}
+
+	obj, err := toApplyObject(c, desired)
+	if err != nil {
+		return err
+	}
+	if err := c.Apply(obj); err != nil {
+		return fmt.Errorf("apply MariaDB: %w", err)
+	}
+	return nil
+}
+
+// desiredMariaDB builds the MariaDB fields the provider owns from the Instance
+// spec. bootstrapFrom is set by the caller, as it depends on existing state.
+func desiredMariaDB(c *controller.Context) (*mariadbv1alpha1.MariaDB, error) {
+	engine := c.Instance().Spec.Components[common.ComponentEngine]
+
+	image, err := resolveEngineImage(c, engine)
+	if err != nil {
+		return nil, err
+	}
+
 	galera := isGaleraTopology(c)
 	replication := isReplicationTopology(c)
 	ha := galera || replication
 
-	// Replicas default depends on the topology (1 for standalone, 3 for Galera
-	// and replication).
 	replicas := defaultReplicas(c)
 	if engine.Replicas != nil {
 		replicas = *engine.Replicas
 	}
 
-	// Storage
-	storageSize := resource.MustParse("10Gi")
-	var storageClassName string
+	storage := mariadbv1alpha1.Storage{
+		Size:      ptr.To(resource.MustParse("10Gi")),
+		Ephemeral: ptr.To(false),
+	}
 	if engine.Storage != nil {
 		if !engine.Storage.Size.IsZero() {
-			storageSize = engine.Storage.Size
+			storage.Size = ptr.To(engine.Storage.Size)
 		}
 		if engine.Storage.StorageClass != nil {
-			storageClassName = *engine.Storage.StorageClass
+			storage.StorageClassName = *engine.Storage.StorageClass
 		}
 	}
 
-	// Resources — map from corev1.ResourceRequirements to the operator's local type.
 	var resourceReqs *mariadbv1alpha1.ResourceRequirements
 	if engine.Resources != nil && (engine.Resources.Limits != nil || engine.Resources.Requests != nil) {
 		resourceReqs = &mariadbv1alpha1.ResourceRequirements{
@@ -134,171 +170,35 @@ func SyncMariaDB(c *controller.Context) error {
 		myCnf = &params.Configuration
 	}
 
-	// Exposure: map the requested Service onto the topology's client-facing
-	// Service. Standalone routes clients to the general Service (<name>); HA
-	// topologies route writes to the primary Service (<name>-primary).
-	serviceTemplate := configureService(engine.Service)
-
-	// Metrics: map the optional monitoring component onto spec.metrics. Nil when
-	// monitoring is not enabled, so the operator deploys no exporter.
+	// Nil when monitoring is not enabled, so the operator deploys no exporter.
 	metrics, err := buildMetrics(c)
 	if err != nil {
-		return fmt.Errorf("build metrics: %w", err)
+		return nil, fmt.Errorf("build metrics: %w", err)
 	}
 
-	// Affinity: map the engine component's Kubernetes affinity onto the
-	// operator's trimmed AffinityConfig. Combines the raw affinity escape hatch,
-	// node-targeting rules, and — for HA topologies — a soft pod anti-affinity
-	// that spreads nodes without blocking scheduling.
-	var engineAffinity *corev1.Affinity
-	if engine.SchedulingPolicy != nil {
-		engineAffinity = engine.SchedulingPolicy.Affinity
-	}
+	// The user's affinity, or for HA topologies a soft pod anti-affinity that
+	// spreads nodes without blocking scheduling. AntiAffinityEnabled stays unset
+	// so the operator does not default a competing affinity.
+	scheduling := ptr.Deref(engine.SchedulingPolicy, commonv1alpha1.SchedulingPolicy{})
+	affinity := buildAffinity(scheduling.Affinity, ha, c.Name())
 
-	affinity, err := buildAffinity(engineAffinity, params.NodeAffinity, ha, c.Name())
-	if err != nil {
-		return fmt.Errorf("build affinity: %w", err)
-	}
-
+	// Only the TLS switches are declared, so the operator's generated
+	// certificate and CA references stay with the operator.
 	tls, err := buildTLS(c)
 	if err != nil {
-		return fmt.Errorf("build TLS: %w", err)
+		return nil, fmt.Errorf("build TLS: %w", err)
 	}
 
-	// Read-modify-write: c.Apply performs a full Update, so we must start from
-	// the operator's current object and overlay only the fields we manage.
-	// Building a bare spec here would wipe every operator-defaulted field
-	// (probes, security context, updateStrategy, TLS, ...) on each reconcile,
-	// causing an endless rolling update of the StatefulSet.
-	existing := &mariadbv1alpha1.MariaDB{}
-	err = c.Get(existing, c.Name())
-	if err != nil && !apierrors.IsNotFound(err) {
-		return fmt.Errorf("get MariaDB: %w", err)
-	}
-
-	var mariadbCR *mariadbv1alpha1.MariaDB
-	if apierrors.IsNotFound(err) {
-		// Physical restore is only possible into a fresh MariaDB via
-		// bootstrapFrom, so it must be set at creation time (the field is
-		// immutable afterwards). Resolve it before building the CR.
-		bootstrap, sourceInstance, err := resolvePhysicalBootstrapFrom(c)
-		if err != nil {
-			return err
-		}
-		if bootstrap != nil {
-			// The physical backup embeds the source's credentials; copy them so
-			// the operator does not generate mismatched passwords that would
-			// fail the probes and crash-loop the restored Pods.
-			if err := ensurePhysicalRestoreCredentials(c, sourceInstance); err != nil {
-				return err
-			}
-		}
-		mariadbCR = buildInitialMariaDB(c, image, replicas, storageSize, storageClassName, resourceReqs, myCnf)
-		mariadbCR.Spec.BootstrapFrom = bootstrap
-		mariadbCR.Spec.Metrics = metrics
-		if galera {
-			mariadbCR.Spec.Galera = &mariadbv1alpha1.Galera{Enabled: true}
-		}
-		if replication {
-			mariadbCR.Spec.Replication = &mariadbv1alpha1.Replication{Enabled: true}
-		}
-	} else {
-		// Overlay only the managed, mutable fields; preserve operator defaults.
-		mariadbCR = existing
-		mariadbCR.Spec.Image = image
-		mariadbCR.Spec.Replicas = replicas
-		mariadbCR.Spec.Storage.Size = &storageSize
-		mariadbCR.Spec.MyCnf = myCnf
-		applyMetricsOverlay(mariadbCR, metrics)
-		applyGaleraOverlay(mariadbCR, galera)
-		applyReplicationOverlay(mariadbCR, replication)
-		if resourceReqs != nil {
-			mariadbCR.Spec.Resources = resourceReqs
-		}
-	}
-
-	// Exposure: route the user's Service request to the topology's client-facing
-	// Service. HA topologies use the primary Service; standalone uses the general one.
-	if ha {
-		mariadbCR.Spec.PrimaryService = serviceTemplate
-	} else {
-		mariadbCR.Spec.Service = serviceTemplate
-	}
-
-	// Overlay affinity for both the create and update paths. AntiAffinityEnabled
-	// is left unset, so the operator's affinity defaulting is a no-op and does
-	// not fight this value.
-	mariadbCR.Spec.Affinity = affinity
-
-	// TLS is enabled by default. Overlay only provider-owned switches so the
-	// operator's generated certificate and CA references remain intact.
-	applyTLSOverlay(mariadbCR, tls)
-
-	applyUpdateStrategyOverlay(mariadbCR)
-
-	// Point-in-time recovery: turn on binary log archival by referencing the
-	// PointInTimeRecovery CR once it exists, and clear the reference when PITR
-	// is disabled. The CR itself is reconciled by SyncPITR.
+	// Binary log archival is turned on by referencing the PointInTimeRecovery
+	// CR once it exists; the CR itself is reconciled by SyncPITR.
 	pitrRef, err := desiredPITRRef(c)
 	if err != nil {
-		return fmt.Errorf("resolve PITR reference: %w", err)
-	}
-	mariadbCR.Spec.PointInTimeRecoveryRef = pitrRef
-
-	if err := c.Apply(mariadbCR); err != nil {
-		return fmt.Errorf("apply MariaDB: %w", err)
+		return nil, fmt.Errorf("resolve PITR reference: %w", err)
 	}
 
-	return nil
-}
-
-// applyUpdateStrategyOverlay keeps the agent/init images in lockstep with the
-// operator bundled in the chart, and runs mariadb-upgrade on start so version
-// changes across MariaDB major releases migrate the system schema. Other
-// updateStrategy fields keep their operator defaults.
-func applyUpdateStrategyOverlay(mariadb *mariadbv1alpha1.MariaDB) {
-	mariadb.Spec.UpdateStrategy.AutoUpdateDataPlane = ptr.To(true)
-	mariadb.Spec.UpdateStrategy.MariaDBAutoUpgradeEnabled = ptr.To(true)
-}
-
-// buildInitialMariaDB constructs the MariaDB CR for first creation. Subsequent
-// reconciles read-modify-write the operator's object instead of rebuilding it.
-func buildInitialMariaDB(
-	c *controller.Context,
-	image string,
-	replicas int32,
-	storageSize resource.Quantity,
-	storageClassName string,
-	resourceReqs *mariadbv1alpha1.ResourceRequirements,
-	myCnf *string,
-) *mariadbv1alpha1.MariaDB {
-	storage := mariadbv1alpha1.Storage{
-		Size:      &storageSize,
-		Ephemeral: ptr.To(false),
-	}
-	if storageClassName != "" {
-		storage.StorageClassName = storageClassName
-	}
-
-	rootRef := mariadbv1alpha1.GeneratedSecretKeyRef{
-		SecretKeySelector: mariadbv1alpha1.SecretKeySelector{
-			LocalObjectReference: mariadbv1alpha1.LocalObjectReference{Name: rootSecretName(c.Name())},
-			Key:                  rootPasswordSecretKey,
-		},
-		Generate: true,
-	}
-
-	initialUser := defaultInitialUser
-	initialDB := defaultInitialDatabase
-	passwordRef := &mariadbv1alpha1.GeneratedSecretKeyRef{
-		SecretKeySelector: mariadbv1alpha1.SecretKeySelector{
-			LocalObjectReference: mariadbv1alpha1.LocalObjectReference{Name: userSecretName(c.Name())},
-			Key:                  userPasswordSecretKey,
-		},
-		Generate: true,
-	}
-
-	return &mariadbv1alpha1.MariaDB{
+	// spec.maxScaleRef is never declared: MaxScale only routes traffic and the
+	// operator keeps owning failover (#37).
+	mdb := &mariadbv1alpha1.MariaDB{
 		ObjectMeta: c.ObjectMeta(c.Name()),
 		Spec: mariadbv1alpha1.MariaDBSpec{
 			Image:                    image,
@@ -307,14 +207,82 @@ func buildInitialMariaDB(
 			Storage:                  storage,
 			RootEmptyPassword:        ptr.To(false),
 			MyCnf:                    myCnf,
-			RootPasswordSecretKeyRef: rootRef,
-			Username:                 &initialUser,
-			Database:                 &initialDB,
-			PasswordSecretKeyRef:     passwordRef,
+			RootPasswordSecretKeyRef: generatedSecretKeyRef(rootSecretName(c.Name()), rootPasswordSecretKey),
+			Username:                 ptr.To(defaultInitialUser),
+			Database:                 ptr.To(defaultInitialDatabase),
+			PasswordSecretKeyRef:     ptr.To(generatedSecretKeyRef(userSecretName(c.Name()), userPasswordSecretKey)),
 			ContainerTemplate: mariadbv1alpha1.ContainerTemplate{
 				Resources: resourceReqs,
 			},
+			Metrics:                metrics,
+			TLS:                    tls,
+			PointInTimeRecoveryRef: pitrRef,
+			// Keeps the agent/init images in lockstep with the bundled operator,
+			// and runs mariadb-upgrade on start so major version changes migrate
+			// the system schema.
+			UpdateStrategy: mariadbv1alpha1.UpdateStrategy{
+				AutoUpdateDataPlane:       ptr.To(true),
+				MariaDBAutoUpgradeEnabled: ptr.To(true),
+			},
 		},
+	}
+	mdb.Spec.Affinity = affinity
+	mdb.Spec.NodeSelector = scheduling.NodeSelector
+	mdb.Spec.Tolerations = scheduling.Tolerations
+	mdb.Spec.TopologySpreadConstraints = convertTopologySpreadConstraints(
+		controller.TopologySpreadConstraints(&scheduling, mariadbPodLabels(c.Name())),
+	)
+	// The operator adds these to the pod template only, never to the selectors.
+	mdb.Spec.PodMetadata = &mariadbv1alpha1.Metadata{Labels: c.PodLabels(common.ComponentEngine)}
+	if galera {
+		mdb.Spec.Galera = &mariadbv1alpha1.Galera{Enabled: true}
+	}
+	if replication {
+		mdb.Spec.Replication = &mariadbv1alpha1.Replication{
+			Enabled: true,
+			// A restarted former primary must not boot writable: until the operator
+			// demotes it, writes routed to it would diverge from the new primary.
+			SemiSyncBootAsReplica: ptr.To(true),
+		}
+	}
+
+	// Standalone routes clients to the general Service (<name>); HA topologies
+	// route writes to the primary Service (<name>-primary).
+	if ha {
+		mdb.Spec.PrimaryService = configureService(engine.Service)
+	} else {
+		mdb.Spec.Service = configureService(engine.Service)
+	}
+	return mdb, nil
+}
+
+// resolveEngineImage returns the engine image from the component override, its
+// selected version, or the provider default.
+func resolveEngineImage(c *controller.Context, engine corev1alpha1.ComponentSpec) (string, error) {
+	if engine.Image != "" {
+		return engine.Image, nil
+	}
+	spec, err := c.ProviderSpec()
+	if err != nil {
+		return "", fmt.Errorf("get provider spec: %w", err)
+	}
+	image := ""
+	if engine.Version != "" {
+		image = controller.GetImageForVersion(spec, common.ComponentEngine, engine.Version)
+	}
+	if image == "" {
+		image = controller.GetDefaultImageForComponent(spec, common.ComponentEngine)
+	}
+	return image, nil
+}
+
+func generatedSecretKeyRef(name, key string) mariadbv1alpha1.GeneratedSecretKeyRef {
+	return mariadbv1alpha1.GeneratedSecretKeyRef{
+		SecretKeySelector: mariadbv1alpha1.SecretKeySelector{
+			LocalObjectReference: mariadbv1alpha1.LocalObjectReference{Name: name},
+			Key:                  key,
+		},
+		Generate: true,
 	}
 }
 
@@ -357,7 +325,23 @@ func StatusMariaDB(c *controller.Context) (controller.Status, error) {
 
 	// Check the Ready condition.
 	if mariadbCR.IsReady() {
-		details, err := buildConnectionDetails(c)
+		proxyEnabled, err := isProxyEnabled(c)
+		if err != nil {
+			return controller.Status{}, err
+		}
+		var mxs *mariadbv1alpha1.MaxScale
+		if proxyEnabled {
+			ready, msg, err := readyMaxScale(c)
+			if err != nil {
+				return controller.Status{}, err
+			}
+			if ready == nil {
+				return controller.Provisioning(msg), nil
+			}
+			mxs = ready
+		}
+
+		details, err := buildConnectionDetails(c, mxs)
 		if err != nil {
 			if errors.Is(err, errTLSCABundleNotReady) {
 				return controller.Provisioning("Waiting for MariaDB TLS CA bundle"), nil
@@ -379,26 +363,42 @@ func StatusMariaDB(c *controller.Context) (controller.Status, error) {
 }
 
 // buildConnectionDetails reads the generated user credentials secret and combines
-// it with the primary Service host to produce a full set of connection details.
-func buildConnectionDetails(c *controller.Context) (controller.ConnectionDetails, error) {
+// it with the client-facing Service host to produce a full set of connection
+// details. When mxs is set, clients are routed through MaxScale; it
+// authenticates them against the same MariaDB users and listens on the same port.
+func buildConnectionDetails(c *controller.Context, mxs *mariadbv1alpha1.MaxScale) (controller.ConnectionDetails, error) {
 	secret := &corev1.Secret{}
 	if err := c.Get(secret, userSecretName(c.Name())); err != nil {
 		return controller.ConnectionDetails{}, fmt.Errorf("get credentials secret: %w", err)
 	}
 
-	host := resolveHost(c)
+	serviceName := c.Name()
+	if isHATopology(c) {
+		serviceName = c.Name() + primaryServiceSuffix
+	}
+	caBundleSecretName := tlsCABundleSecretName(c.Name())
+	var tlsEnabled bool
+	if mxs != nil {
+		serviceName = mxs.Name
+		caBundleSecretName = tlsCABundleSecretName(mxs.Name)
+		tlsEnabled = mxs.IsTLSEnabled()
+	} else {
+		tlsSettings, err := resolveTLSSettings(c)
+		if err != nil {
+			return controller.ConnectionDetails{}, fmt.Errorf("resolve TLS settings: %w", err)
+		}
+		tlsEnabled = tlsSettings.Enabled
+	}
+
+	host := resolveHost(c, serviceName)
 	port := strconv.Itoa(defaultPort)
 	username := defaultInitialUser
 	password := string(secret.Data[userPasswordSecretKey])
 	additionalProperties := map[string]string{}
 
-	tlsSettings, err := resolveTLSSettings(c)
-	if err != nil {
-		return controller.ConnectionDetails{}, fmt.Errorf("resolve TLS settings: %w", err)
-	}
-	if tlsSettings.Enabled {
+	if tlsEnabled {
 		caSecret := &corev1.Secret{}
-		if err := c.Get(caSecret, tlsCABundleSecretName(c.Name())); err != nil {
+		if err := c.Get(caSecret, caBundleSecretName); err != nil {
 			return controller.ConnectionDetails{}, fmt.Errorf("%w: %v", errTLSCABundleNotReady, err)
 		}
 		ca, ok := caSecret.Data[tlsCAKey]
@@ -424,15 +424,10 @@ func buildConnectionDetails(c *controller.Context) (controller.ConnectionDetails
 	}, nil
 }
 
-// resolveHost returns the externally reachable host for the topology's
-// client-facing Service: the primary Service (<name>-primary) for HA topologies,
-// the general Service (<name>) for standalone. It prefers a LoadBalancer ingress
-// address when available, otherwise the internal cluster FQDN.
-func resolveHost(c *controller.Context) string {
-	serviceName := c.Name()
-	if isHATopology(c) {
-		serviceName = c.Name() + primaryServiceSuffix
-	}
+// resolveHost returns the externally reachable host for the given client-facing
+// Service. It prefers a LoadBalancer ingress address when available, otherwise
+// the internal cluster FQDN.
+func resolveHost(c *controller.Context, serviceName string) string {
 	internal := fmt.Sprintf("%s.%s.svc", serviceName, c.Namespace())
 
 	svc := &corev1.Service{}
@@ -453,13 +448,18 @@ func resolveHost(c *controller.Context) string {
 	return internal
 }
 
-// CleanupMariaDB deletes the MariaDB CR when the Instance is being deleted.
-// The MariaDB CR is owned by the Instance (via c.ObjectMeta), so cascaded GC
+// CleanupMariaDB deletes the MaxScale and MariaDB CRs when the Instance is being
+// deleted. Both are owned by the Instance (via c.ObjectMeta), so cascaded GC
 // handles child resources automatically. This explicit delete ensures the operator
 // performs any finalizer-driven cleanup (e.g., releasing PVCs via operator policy).
+// MaxScale goes first so it stops managing the servers before they disappear.
 func CleanupMariaDB(c *controller.Context) error {
 	l := log.FromContext(c.Context())
 	l.Info("Cleaning up MariaDB cluster", "cluster", c.Name())
+
+	if err := teardownMaxScale(c); err != nil {
+		return err
+	}
 
 	mariadbCR := &mariadbv1alpha1.MariaDB{
 		ObjectMeta: metav1.ObjectMeta{

@@ -131,6 +131,15 @@ jobs:
       suite: replication
     secrets: inherit
 
+  test-integration-maxscale:
+    name: Integration / maxscale
+    needs: [lint, build, verify]
+    uses: ./.github/workflows/integration-test.yaml
+    with:
+      make_target: test-integration-maxscale
+      suite: maxscale
+    secrets: inherit
+
   test-integration-backup:
     name: Integration / backup
     needs: [lint, build, verify]

@@ -5,12 +5,19 @@ spec:
     mariadb:
       defaultVersion: "12.3"
       versions:
+        - image: mariadb:10.11
+          version: "10.11"
         - image: mariadb:11.4
           version: "11.4"
         - image: mariadb:11.8
           version: "11.8"
         - image: mariadb:12.3
           version: "12.3"
+    maxscale:
+      defaultVersion: 23.08.13
+      versions:
+        - image: mariadb/maxscale:23.08.13-2
+          version: 23.08.13
     mysqld-exporter:
       defaultVersion: 0.15.1
       versions:
@@ -22,8 +29,6 @@ spec:
         openAPIV3Schema:
           properties:
             configuration:
-              type: string
-            nodeAffinity:
               type: string
             tls:
               properties:
@@ -57,31 +62,118 @@ spec:
               type: object
           type: object
       type: mysqld-exporter
+    proxy:
+      parametersSchema:
+        openAPIV3Schema:
+          properties:
+            enabled:
+              type: boolean
+          type: object
+      type: maxscale
   defaultVersion: "12.3"
   release:
     version: 0.1.0
   topologies:
     galera:
       components:
-        engine: {}
+        engine:
+          supportedFields:
+            openAPIV3Schema:
+              properties:
+                replicas: {}
+                resources: {}
+                schedulingPolicy:
+                  properties:
+                    affinity: {}
+                    nodeSelector: {}
+                    tolerations: {}
+                    topologySpreadConstraints: {}
+                service: {}
+                storage: {}
         monitoring:
           optional: true
+          supportedFields:
+            openAPIV3Schema:
+              properties:
+                resources: {}
+        proxy:
+          optional: true
+          supportedFields:
+            openAPIV3Schema:
+              properties:
+                replicas: {}
+                resources: {}
+                schedulingPolicy:
+                  properties:
+                    affinity: {}
+                    nodeSelector: {}
+                    tolerations: {}
+                    topologySpreadConstraints: {}
+                service: {}
       parametersSchema:
         openAPIV3Schema:
           type: object
     replication:
       components:
-        engine: {}
+        engine:
+          supportedFields:
+            openAPIV3Schema:
+              properties:
+                replicas: {}
+                resources: {}
+                schedulingPolicy:
+                  properties:
+                    affinity: {}
+                    nodeSelector: {}
+                    tolerations: {}
+                    topologySpreadConstraints: {}
+                service: {}
+                storage: {}
         monitoring:
           optional: true
+          supportedFields:
+            openAPIV3Schema:
+              properties:
+                resources: {}
+        proxy:
+          optional: true
+          supportedFields:
+            openAPIV3Schema:
+              properties:
+                replicas: {}
+                resources: {}
+                schedulingPolicy:
+                  properties:
+                    affinity: {}
+                    nodeSelector: {}
+                    tolerations: {}
+                    topologySpreadConstraints: {}
+                service: {}
       parametersSchema:
         openAPIV3Schema:
           type: object
     standalone:
       components:
-        engine: {}
+        engine:
+          supportedFields:
+            openAPIV3Schema:
+              properties:
+                replicas: {}
+                resources: {}
+                schedulingPolicy:
+                  properties:
+                    affinity: {}
+                    nodeSelector: {}
+                    tolerations: {}
+                    topologySpreadConstraints: {}
+                service: {}
+                storage: {}
         monitoring:
           optional: true
+          supportedFields:
+            openAPIV3Schema:
+              properties:
+                resources: {}
   uiSchema:
     galera:
       sections:
@@ -111,18 +203,14 @@ spec:
                     value: NodePort
               path: spec.components.engine.service.serviceType
               uiType: select
-            nodeAffinity:
-              fieldParams:
-                helperText: 'Restrict pods to nodes matching these label rules. One rule per line: ''<key> <operator> [values]'' (operator: In, NotIn, Exists, DoesNotExist).'
-                label: Node targeting
-                maxRows: 6
-                minRows: 2
-                multiline: true
-                placeholder: |
-                  disktype In ssd,nvme
-                  gpu Exists
-              path: spec.components.engine.parameters.nodeAffinity
-              uiType: text
+            podSchedulingPolicy:
+              components:
+                policy:
+                  uiType: widget
+                  widgetType: podSchedulingPolicy
+              groupType: toggleable
+              label: Pod scheduling policy
+              uiType: group
             storageClass:
               dataSource:
                 provider: storageClasses
@@ -137,7 +225,7 @@ spec:
             - storageClass
             - externalAccess
             - configuration
-            - nodeAffinity
+            - podSchedulingPolicy
           description: Configure storage class and optional MariaDB settings.
           label: Advanced configuration
         databaseVersion:
@@ -152,6 +240,7 @@ spec:
                     disabled: true
                 optionsPath: spec.versions
                 optionsPathConfig:
+                  defaultValuePath: spec.defaultVersion
                   labelPath: name
                   valuePath: name
               path: spec.version
@@ -172,6 +261,42 @@ spec:
             - enabled
           description: Expose database metrics and integrate them with a Prometheus stack.
           label: Monitoring
+        proxy:
+          components:
+            enabled:
+              fieldParams:
+                defaultValue: false
+                label: Enable MaxScale
+              path: spec.components.proxy.parameters.enabled
+              uiType: toggle
+            externalAccess:
+              fieldParams:
+                defaultValue: ClusterIP
+                label: External access
+                options:
+                  - label: ClusterIP
+                    value: ClusterIP
+                  - label: LoadBalancer
+                    value: LoadBalancer
+                  - label: NodePort
+                    value: NodePort
+              path: spec.components.proxy.service.serviceType
+              uiType: select
+            replicas:
+              fieldParams:
+                defaultValue: 2
+                label: Number of proxies
+              path: spec.components.proxy.replicas
+              uiType: number
+              validation:
+                int: true
+                min: 1
+          componentsOrder:
+            - enabled
+            - replicas
+            - externalAccess
+          description: Route client traffic through MariaDB MaxScale, which balances connections across nodes.
+          label: Proxy
         resources:
           components:
             nodes:
@@ -284,6 +409,7 @@ spec:
         - databaseVersion
         - resources
         - monitoring
+        - proxy
         - security
         - advanced
     replication:
@@ -314,18 +440,14 @@ spec:
                     value: NodePort
               path: spec.components.engine.service.serviceType
               uiType: select
-            nodeAffinity:
-              fieldParams:
-                helperText: 'Restrict pods to nodes matching these label rules. One rule per line: ''<key> <operator> [values]'' (operator: In, NotIn, Exists, DoesNotExist).'
-                label: Node targeting
-                maxRows: 6
-                minRows: 2
-                multiline: true
-                placeholder: |
-                  disktype In ssd,nvme
-                  gpu Exists
-              path: spec.components.engine.parameters.nodeAffinity
-              uiType: text
+            podSchedulingPolicy:
+              components:
+                policy:
+                  uiType: widget
+                  widgetType: podSchedulingPolicy
+              groupType: toggleable
+              label: Pod scheduling policy
+              uiType: group
             storageClass:
               dataSource:
                 provider: storageClasses
@@ -340,7 +462,7 @@ spec:
             - storageClass
             - externalAccess
             - configuration
-            - nodeAffinity
+            - podSchedulingPolicy
           description: Configure storage class and optional MariaDB settings.
           label: Advanced configuration
         databaseVersion:
@@ -355,6 +477,7 @@ spec:
                     disabled: true
                 optionsPath: spec.versions
                 optionsPathConfig:
+                  defaultValuePath: spec.defaultVersion
                   labelPath: name
                   valuePath: name
               path: spec.version
@@ -375,6 +498,42 @@ spec:
             - enabled
           description: Expose database metrics and integrate them with a Prometheus stack.
           label: Monitoring
+        proxy:
+          components:
+            enabled:
+              fieldParams:
+                defaultValue: false
+                label: Enable MaxScale
+              path: spec.components.proxy.parameters.enabled
+              uiType: toggle
+            externalAccess:
+              fieldParams:
+                defaultValue: ClusterIP
+                label: External access
+                options:
+                  - label: ClusterIP
+                    value: ClusterIP
+                  - label: LoadBalancer
+                    value: LoadBalancer
+                  - label: NodePort
+                    value: NodePort
+              path: spec.components.proxy.service.serviceType
+              uiType: select
+            replicas:
+              fieldParams:
+                defaultValue: 2
+                label: Number of proxies
+              path: spec.components.proxy.replicas
+              uiType: number
+              validation:
+                int: true
+                min: 1
+          componentsOrder:
+            - enabled
+            - replicas
+            - externalAccess
+          description: Route client traffic through MariaDB MaxScale, which splits reads and writes across nodes.
+          label: Proxy
         resources:
           components:
             nodes:
@@ -476,6 +635,7 @@ spec:
         - databaseVersion
         - resources
         - monitoring
+        - proxy
         - security
         - advanced
     standalone:
@@ -506,18 +666,14 @@ spec:
                     value: NodePort
               path: spec.components.engine.service.serviceType
               uiType: select
-            nodeAffinity:
-              fieldParams:
-                helperText: 'Restrict pods to nodes matching these label rules. One rule per line: ''<key> <operator> [values]'' (operator: In, NotIn, Exists, DoesNotExist).'
-                label: Node targeting
-                maxRows: 6
-                minRows: 2
-                multiline: true
-                placeholder: |
-                  disktype In ssd,nvme
-                  gpu Exists
-              path: spec.components.engine.parameters.nodeAffinity
-              uiType: text
+            podSchedulingPolicy:
+              components:
+                policy:
+                  uiType: widget
+                  widgetType: podSchedulingPolicy
+              groupType: toggleable
+              label: Pod scheduling policy
+              uiType: group
             storageClass:
               dataSource:
                 provider: storageClasses
@@ -532,7 +688,7 @@ spec:
             - storageClass
             - externalAccess
             - configuration
-            - nodeAffinity
+            - podSchedulingPolicy
           description: Configure storage class and optional MariaDB settings.
           label: Advanced configuration
         databaseVersion:
@@ -547,6 +703,7 @@ spec:
                     disabled: true
                 optionsPath: spec.versions
                 optionsPathConfig:
+                  defaultValuePath: spec.defaultVersion
                   labelPath: name
                   valuePath: name
               path: spec.version
@@ -673,14 +830,22 @@ spec:
         - advanced
   versions:
     - components:
+        engine: "10.11"
+        monitoring: 0.15.1
+        proxy: 23.08.13
+      name: "10.11"
+    - components:
         engine: "11.4"
         monitoring: 0.15.1
+        proxy: 23.08.13
       name: "11.4"
     - components:
         engine: "11.8"
         monitoring: 0.15.1
+        proxy: 23.08.13
       name: "11.8"
     - components:
         engine: "12.3"
         monitoring: 0.15.1
+        proxy: 23.08.13
       name: "12.3"

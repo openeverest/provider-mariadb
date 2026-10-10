@@ -63,9 +63,10 @@ provider itself is covered under [Installation](#installation).
 | Version upgrades | ✅ | of the deployed MariaDB version — change `spec.version`; see [Versions](#versions) |
 | High availability (Galera) | ✅ | `spec.topology.type: galera` — multi-master cluster; odd node count (default 3) |
 | High availability (replication) | ✅ | `spec.topology.type: replication` — async primary/replica cluster; at least 2 nodes (default 3) |
+| Proxy / load balancing (MaxScale) | ✅ | opt-in via the `proxy` component on `galera` and `replication`; see [MaxScale proxy](#maxscale-proxy) |
 | Custom configuration | ✅ | `my.cnf` via the engine component's `configuration` parameter |
 | Monitoring | ✅ | opt-in via the `monitoring` component; deploys `mysqld-exporter` and a Prometheus `ServiceMonitor` — requires the `ServiceMonitor` CRD (`monitoring.coreos.com`) |
-| Pod scheduling (affinity) | ✅ | `spec.components.engine.schedulingPolicy.affinity` — `nodeAffinity` and `podAntiAffinity` are mapped to the operator; `podAffinity` is rejected |
+| Pod scheduling | ✅ | `spec.components.{engine,proxy}.schedulingPolicy` — `affinity` (`nodeAffinity` and `podAntiAffinity`; `podAffinity` is rejected), `nodeSelector`, `tolerations` and `topologySpreadConstraints`; `schedulerName` is not supported. A set `affinity` replaces the HA default soft anti-affinity, `{}` sets none |
 | TLS | ✅ | enabled by default with operator-managed certificates; CA is published in the connection Secret |
 
 Stateful workloads additionally report:
@@ -86,7 +87,7 @@ The provider chart is published as an OCI artifact:
 ```bash
 helm install provider-mariadb \
   oci://ghcr.io/openeverest/charts/provider-mariadb \
-  --version 0.1.6 \
+  --version 0.1.9 \
   --namespace everest-system
 ```
 
@@ -96,7 +97,7 @@ helm install provider-mariadb \
 Upgrade and uninstall:
 
 ```bash
-helm upgrade provider-mariadb oci://ghcr.io/openeverest/charts/provider-mariadb --version 0.1.6
+helm upgrade provider-mariadb oci://ghcr.io/openeverest/charts/provider-mariadb --version 0.1.9
 helm uninstall provider-mariadb --namespace everest-system
 ```
 
@@ -165,6 +166,46 @@ TLS can be explicitly disabled with `tls.enabled: false`. Galera deployments
 also encrypt state snapshot transfers by default; this can be changed with
 `tls.galeraSSTEnabled`. See [examples/instance-tls.yaml](examples/instance-tls.yaml).
 
+## MaxScale proxy
+
+The `galera` and `replication` topologies can be fronted by
+[MariaDB MaxScale](https://github.com/mariadb-operator/mariadb-operator/blob/main/docs/maxscale.md),
+which routes writes to the primary and balances reads across nodes. Enable it
+through the `proxy` component:
+
+```yaml
+spec:
+  topology:
+    type: replication
+  components:
+    proxy:
+      replicas: 2        # default
+      parameters:
+        enabled: true
+      service:
+        serviceType: LoadBalancer
+```
+
+While the proxy is enabled, the connection Secret points at the MaxScale
+Service (`<name>-maxscale`) with the same credentials. MaxScale terminates TLS
+only when the engine requires it (`tls.required: true`); the connection Secret
+then carries the MaxScale CA. Setting `enabled: false` removes MaxScale. See
+[examples/instance-maxscale.yaml](examples/instance-maxscale.yaml).
+
+Primary failover, rejoin and `read_only` stay with the operator: MaxScale only
+routes traffic and follows the topology. With `replication`, the provider turns
+off MaxScale's own `auto_failover`, `auto_rejoin` and
+`switchover_on_low_disk_space`, because running failover in both MaxScale and
+the operator races and can leave no writable primary
+([#37](https://github.com/openeverest/provider-mariadb/issues/37)).
+Replication nodes also boot read-only, so a restarted former primary never
+accepts writes before the operator has demoted it.
+
+> [!IMPORTANT]
+> MaxScale is licensed under the
+> [Business Source License](https://github.com/mariadb-corporation/MaxScale/blob/23.08/LICENSE.TXT).
+> Make sure you understand the implications before enabling it.
+
 ## Backups and restore
 
 Backups are driven natively by the operator to an S3-compatible object store —
@@ -196,7 +237,9 @@ spec:
           - name: daily
             enabled: true
             cron: "0 0 * * *"
-            retentionCopies: 7
+            retention:
+              type: count   # or `type: time` with `duration: 30d` (d/w/m)
+              count: 7
             parameters:
               type: physical
               compression: gzip
@@ -284,6 +327,7 @@ spec:
 <!-- BEGIN GENERATED: versions -->
 | Version bundle | Default | mariadb |
 |---|---|---|
+| `10.11` | | `10.11` |
 | `11.4` | | `11.4` |
 | `11.8` | | `11.8` |
 | `12.3` | ✅ | `12.3` |

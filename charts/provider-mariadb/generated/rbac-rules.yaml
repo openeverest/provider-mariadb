@@ -10,6 +10,15 @@
 - apiGroups:
     - ""
   resources:
+    - pods
+    - services
+  verbs:
+    - get
+    - list
+    - watch
+- apiGroups:
+    - ""
+  resources:
     - secrets
   verbs:
     - create
@@ -17,14 +26,6 @@
     - list
     - patch
     - update
-    - watch
-- apiGroups:
-    - ""
-  resources:
-    - services
-  verbs:
-    - get
-    - list
     - watch
 - apiGroups:
     - backup.openeverest.io
@@ -114,6 +115,7 @@
   resources:
     - backups
     - mariadbs
+    - maxscales
     - physicalbackups
     - pointintimerecoveries
     - restores
@@ -130,6 +132,7 @@
   resources:
     - backups/status
     - mariadbs/status
+    - maxscales/status
     - physicalbackups/status
     - pointintimerecoveries/status
     - restores/status

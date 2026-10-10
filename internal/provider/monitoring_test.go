@@ -59,7 +59,6 @@ func newMonitoringContext(t *testing.T, params *components.MonitoringParameters,
 			t.Fatalf("marshal params: %v", err)
 		}
 		instance.Spec.Components[common.ComponentMonitoring] = corev1alpha1.ComponentSpec{
-			Name:       common.ComponentMonitoring,
 			Type:       common.ComponentMonitoring,
 			Image:      image,
 			Parameters: &runtime.RawExtension{Raw: raw},
@@ -171,7 +170,6 @@ func TestBuildMetrics_EnabledAsString(t *testing.T) {
 		Spec: corev1alpha1.InstanceSpec{
 			Components: map[string]corev1alpha1.ComponentSpec{
 				common.ComponentMonitoring: {
-					Name:       common.ComponentMonitoring,
 					Type:       common.ComponentMonitoring,
 					Image:      "exporter:latest",
 					Parameters: &runtime.RawExtension{Raw: []byte(`{"enabled":"true"}`)},

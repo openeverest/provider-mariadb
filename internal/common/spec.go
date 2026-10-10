@@ -11,6 +11,9 @@ const (
 	// ComponentMonitoring is the logical component name for metrics/monitoring.
 	ComponentMonitoring = "monitoring"
 
+	// ComponentProxy is the logical component name for the MaxScale proxy.
+	ComponentProxy = "proxy"
+
 	// ComponentTypeMariaDB is the component type name that maps to the mariadb container.
 	ComponentTypeMariaDB = "mariadb"
 )

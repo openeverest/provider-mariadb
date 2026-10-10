@@ -46,7 +46,7 @@ func newTLSContext(t *testing.T, topology, params string, objs ...client.Object)
 		t.Fatalf("add MariaDB scheme: %v", err)
 	}
 
-	engine := corev1alpha1.ComponentSpec{Name: common.ComponentEngine, Type: common.ComponentTypeMariaDB}
+	engine := corev1alpha1.ComponentSpec{Type: common.ComponentTypeMariaDB}
 	if params != "" {
 		engine.Parameters = &runtime.RawExtension{Raw: []byte(params)}
 	}
@@ -142,30 +142,6 @@ func TestValidateTLS(t *testing.T) {
 	}
 }
 
-func TestApplyTLSOverlayPreservesCertificateReferences(t *testing.T) {
-	mdb := &mariadbv1alpha1.MariaDB{
-		Spec: mariadbv1alpha1.MariaDBSpec{
-			TLS: &mariadbv1alpha1.TLS{
-				Enabled:                   false,
-				ServerCASecretRef:         &mariadbv1alpha1.LocalObjectReference{Name: "custom-server-ca"},
-				ClientCertSecretRef:       &mariadbv1alpha1.LocalObjectReference{Name: "custom-client-cert"},
-				ServerCertAdditionalNames: []string{"db.example.com"},
-			},
-		},
-	}
-	desired := &mariadbv1alpha1.TLS{Enabled: true}
-	applyTLSOverlay(mdb, desired)
-
-	if !mdb.Spec.TLS.Enabled {
-		t.Fatal("expected TLS to be enabled")
-	}
-	if mdb.Spec.TLS.ServerCASecretRef.Name != "custom-server-ca" ||
-		mdb.Spec.TLS.ClientCertSecretRef.Name != "custom-client-cert" ||
-		len(mdb.Spec.TLS.ServerCertAdditionalNames) != 1 {
-		t.Fatalf("certificate configuration was not preserved: %+v", mdb.Spec.TLS)
-	}
-}
-
 func TestBuildConnectionDetailsIncludesTLSCA(t *testing.T) {
 	credentials := &corev1.Secret{
 		ObjectMeta: metav1.ObjectMeta{Name: userSecretName("test"), Namespace: "default"},
@@ -176,7 +152,7 @@ func TestBuildConnectionDetailsIncludesTLSCA(t *testing.T) {
 		Data:       map[string][]byte{tlsCAKey: []byte("test-ca")},
 	}
 
-	details, err := buildConnectionDetails(newTLSContext(t, "", "", credentials, caBundle))
+	details, err := buildConnectionDetails(newTLSContext(t, "", "", credentials, caBundle), nil)
 	if err != nil {
 		t.Fatalf("buildConnectionDetails() error = %v", err)
 	}
@@ -191,7 +167,7 @@ func TestBuildConnectionDetailsWaitsForTLSCA(t *testing.T) {
 		ObjectMeta: metav1.ObjectMeta{Name: userSecretName("test"), Namespace: "default"},
 		Data:       map[string][]byte{userPasswordSecretKey: []byte("password")},
 	}
-	_, err := buildConnectionDetails(newTLSContext(t, "", "", credentials))
+	_, err := buildConnectionDetails(newTLSContext(t, "", "", credentials), nil)
 	if !errors.Is(err, errTLSCABundleNotReady) {
 		t.Fatalf("expected errTLSCABundleNotReady, got %v", err)
 	}
@@ -202,7 +178,7 @@ func TestBuildConnectionDetailsOmitsTLSWhenDisabled(t *testing.T) {
 		ObjectMeta: metav1.ObjectMeta{Name: userSecretName("test"), Namespace: "default"},
 		Data:       map[string][]byte{userPasswordSecretKey: []byte("password")},
 	}
-	details, err := buildConnectionDetails(newTLSContext(t, "", `{"tls":{"enabled":false}}`, credentials))
+	details, err := buildConnectionDetails(newTLSContext(t, "", `{"tls":{"enabled":false}}`, credentials), nil)
 	if err != nil {
 		t.Fatalf("buildConnectionDetails() error = %v", err)
 	}

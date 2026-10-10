@@ -24,6 +24,18 @@ import (
 	"github.com/openeverest/provider-mariadb/internal/common"
 )
 
+// buildAffinity returns the engine's affinity or, for HA topologies, the default
+// soft pod anti-affinity. A set affinity replaces the default, so {} sets none.
+func buildAffinity(raw *corev1.Affinity, ha bool, instanceName string) *mariadbv1alpha1.AffinityConfig {
+	if raw != nil {
+		return convertAffinity(raw)
+	}
+	if ha {
+		return defaultHAAffinity(instanceName)
+	}
+	return nil
+}
+
 // convertAffinity maps a standard Kubernetes corev1.Affinity supplied on the
 // Instance's engine component onto the mariadb-operator's AffinityConfig.
 //
@@ -68,6 +80,39 @@ func validateAffinity(a *corev1.Affinity) error {
 		)
 	}
 	return nil
+}
+
+// mariadbPodLabels are the operator's selector labels of the MariaDB pods.
+func mariadbPodLabels(instanceName string) map[string]string {
+	return map[string]string{
+		"app.kubernetes.io/name":     "mariadb",
+		"app.kubernetes.io/instance": instanceName,
+	}
+}
+
+// maxScalePodLabels are the operator's selector labels of the MaxScale pods.
+func maxScalePodLabels(maxScaleName string) map[string]string {
+	return map[string]string{
+		"app.kubernetes.io/name":     "maxscale",
+		"app.kubernetes.io/instance": maxScaleName,
+	}
+}
+
+func convertTopologySpreadConstraints(in []corev1.TopologySpreadConstraint) []mariadbv1alpha1.TopologySpreadConstraint {
+	var out []mariadbv1alpha1.TopologySpreadConstraint
+	for _, c := range in {
+		out = append(out, mariadbv1alpha1.TopologySpreadConstraint{
+			MaxSkew:            c.MaxSkew,
+			TopologyKey:        c.TopologyKey,
+			WhenUnsatisfiable:  c.WhenUnsatisfiable,
+			LabelSelector:      c.LabelSelector,
+			MinDomains:         c.MinDomains,
+			NodeAffinityPolicy: c.NodeAffinityPolicy,
+			NodeTaintsPolicy:   c.NodeTaintsPolicy,
+			MatchLabelKeys:     c.MatchLabelKeys,
+		})
+	}
+	return out
 }
 
 func convertNodeAffinity(na *corev1.NodeAffinity) *mariadbv1alpha1.NodeAffinity {
