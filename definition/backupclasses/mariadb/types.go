@@ -34,9 +34,15 @@ type MariadbBackupParameters struct {
 	Type string `json:"type,omitempty"`
 	// Compression selects the algorithm used to compress the backup. Applies to
 	// both types. Defaults to none.
-	// +kubebuilder:validation:Enum=none;bzip2;gzip
+	// +kubebuilder:validation:Enum=none;bzip2;gzip;zstd
 	// +optional
 	Compression string `json:"compression,omitempty"`
+	// CompressionThreads is the number of CPU threads used for compression.
+	// Only has an effect when compression is zstd. Defaults to all available
+	// CPUs when unset. Applies to both types.
+	// +kubebuilder:validation:Minimum=1
+	// +optional
+	CompressionThreads *int32 `json:"compressionThreads,omitempty"`
 	// Databases restricts a logical backup to the named databases. When empty,
 	// all databases are backed up. Logical backups only.
 	// +optional

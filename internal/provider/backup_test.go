@@ -34,6 +34,7 @@ import (
 	corev1alpha1 "github.com/openeverest/openeverest/v2/api/core/v1alpha1"
 	"github.com/openeverest/openeverest/v2/provider-runtime/controller"
 
+	mariadbbackup "github.com/openeverest/provider-mariadb/definition/backupclasses/mariadb"
 	"github.com/openeverest/provider-mariadb/internal/common"
 )
 
@@ -154,6 +155,19 @@ func TestParseBackupParams(t *testing.T) {
 		assert.True(t, *got.IgnoreGlobalPriv)
 	})
 
+	t.Run("decodes zstd with compression threads", func(t *testing.T) {
+		got, err := parseBackupParams([]byte(`{"compression":"zstd","compressionThreads":4}`))
+		require.NoError(t, err)
+		assert.Equal(t, "zstd", got.Compression)
+		require.NotNil(t, got.CompressionThreads)
+		assert.Equal(t, int32(4), *got.CompressionThreads)
+	})
+
+	t.Run("compression threads are nil when unset", func(t *testing.T) {
+		got, err := parseBackupParams([]byte(`{"compression":"zstd"}`))
+		require.NoError(t, err)
+		assert.Nil(t, got.CompressionThreads)
+	})
 	t.Run("decodes physical type", func(t *testing.T) {
 		got, err := parseBackupParams([]byte(`{"type":"physical","target":"Replica"}`))
 		require.NoError(t, err)
@@ -169,6 +183,21 @@ func TestParseBackupParams(t *testing.T) {
 	})
 }
 
+func TestApplyLogicalBackupParametersZstd(t *testing.T) {
+	threads := int32(4)
+	var spec mariadbv1alpha1.BackupSpec
+	applyLogicalBackupParameters(&spec, mariadbbackup.MariadbBackupParameters{
+		Compression:        "zstd",
+		CompressionThreads: &threads,
+	})
+	assert.Equal(t, mariadbv1alpha1.CompressAlgorithm("zstd"), spec.Compression)
+	require.NotNil(t, spec.CompressionThreads)
+	assert.Equal(t, int32(4), *spec.CompressionThreads)
+
+	var unset mariadbv1alpha1.BackupSpec
+	applyLogicalBackupParameters(&unset, mariadbbackup.MariadbBackupParameters{Compression: "zstd"})
+	assert.Nil(t, unset.CompressionThreads)
+}
 func completeCondition(reason string, status metav1.ConditionStatus, at time.Time) []metav1.Condition {
 	return []metav1.Condition{{
 		Type:               mariadbv1alpha1.ConditionTypeComplete,

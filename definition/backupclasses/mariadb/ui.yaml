@@ -35,6 +35,15 @@ backup:
             value: gzip
           - label: bzip2
             value: bzip2
+          - label: zstd
+            value: zstd
+    compressionThreads:
+      uiType: number
+      path: parameters.compressionThreads
+      fieldParams:
+        label: Compression threads (zstd only)
+      validation:
+        min: 1
     target:
       uiType: select
       path: parameters.target
@@ -48,4 +57,5 @@ backup:
   componentsOrder:
     - type
     - compression
+    - compressionThreads
     - target
