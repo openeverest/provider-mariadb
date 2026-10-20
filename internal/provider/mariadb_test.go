@@ -163,6 +163,18 @@ func TestDesiredMariaDB_SchedulingPolicy(t *testing.T) {
 	assert.Equal(t, defaultHAAffinity("test"), mdb.Spec.Affinity, "an unset affinity keeps the HA default")
 }
 
+func TestDesiredMariaDB_PVCRetentionPolicy(t *testing.T) {
+	for _, topology := range []string{"", "replication", "galera"} {
+		h := newSyncHarness(t, topology, nil)
+		mdb, err := desiredMariaDB(h.Context)
+		require.NoError(t, err)
+		assert.Equal(t, &mariadbv1alpha1.StatefulSetPersistentVolumeClaimRetentionPolicy{
+			WhenDeleted: mariadbv1alpha1.PersistentVolumeClaimRetentionPolicyDelete,
+			WhenScaled:  mariadbv1alpha1.PersistentVolumeClaimRetentionPolicyRetain,
+		}, mdb.Spec.Storage.PVCRetentionPolicy, "topology %q", topology)
+	}
+}
+
 func TestDesiredMariaDB_NoTopologySpreadByDefault(t *testing.T) {
 	h := newSyncHarness(t, "galera", nil)
 	mdb, err := desiredMariaDB(h.Context)
@@ -308,4 +320,39 @@ func TestHasLegacyUpdateManager(t *testing.T) {
 	assert.True(t, hasLegacyUpdateManager([]metav1.ManagedFieldsEntry{
 		{Manager: legacyFieldManager, Operation: metav1.ManagedFieldsOperationUpdate},
 	}))
+}
+
+func TestCleanupMariaDB_DeletesDataPVCs(t *testing.T) {
+	pvc := func(name string, labels map[string]string) *corev1.PersistentVolumeClaim {
+		return &corev1.PersistentVolumeClaim{ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: "default", Labels: labels}}
+	}
+	withRole := func(labels map[string]string, role string) map[string]string {
+		labels["pvc.k8s.mariadb.com/role"] = role
+		return labels
+	}
+	h := newSyncHarness(t, "galera", nil,
+		&mariadbv1alpha1.MariaDB{ObjectMeta: metav1.ObjectMeta{Name: "test", Namespace: "default"}},
+		pvc("storage-test-0", withRole(mariadbPodLabels("test"), "storage")),
+		pvc("galera-test-0", withRole(mariadbPodLabels("test"), "config")),
+		pvc("storage-other-0", withRole(mariadbPodLabels("other"), "storage")),
+		pvc("test-maxscale-0", maxScalePodLabels(maxScaleName("test"))),
+		pvc("backup-staging", map[string]string{"app.kubernetes.io/instance": "test"}),
+	)
+
+	require.NoError(t, CleanupMariaDB(h.Context))
+
+	pvcs := &corev1.PersistentVolumeClaimList{}
+	require.NoError(t, h.List(pvcs))
+	var names []string
+	for _, p := range pvcs.Items {
+		names = append(names, p.Name)
+	}
+	assert.ElementsMatch(t, []string{"storage-other-0", "test-maxscale-0", "backup-staging"}, names,
+		"only the Instance's MariaDB PVCs are deleted")
+
+	exists, err := h.Exists(&mariadbv1alpha1.MariaDB{}, "test")
+	require.NoError(t, err)
+	assert.False(t, exists)
+
+	require.NoError(t, CleanupMariaDB(h.Context), "a repeated cleanup must not fail")
 }
