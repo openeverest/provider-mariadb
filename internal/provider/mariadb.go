@@ -145,6 +145,12 @@ func desiredMariaDB(c *controller.Context) (*mariadbv1alpha1.MariaDB, error) {
 	storage := mariadbv1alpha1.Storage{
 		Size:      ptr.To(engineStorageSize(engine)),
 		Ephemeral: ptr.To(false),
+		// Delete the data PVCs with the Instance, so a re-created Instance of the
+		// same name does not reattach the old datadir. Keep them on scale-down.
+		PVCRetentionPolicy: &mariadbv1alpha1.StatefulSetPersistentVolumeClaimRetentionPolicy{
+			WhenDeleted: mariadbv1alpha1.PersistentVolumeClaimRetentionPolicyDelete,
+			WhenScaled:  mariadbv1alpha1.PersistentVolumeClaimRetentionPolicyRetain,
+		},
 	}
 	if engine.Storage != nil {
 		if engine.Storage.StorageClass != nil {

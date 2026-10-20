@@ -163,6 +163,18 @@ func TestDesiredMariaDB_SchedulingPolicy(t *testing.T) {
 	assert.Equal(t, defaultHAAffinity("test"), mdb.Spec.Affinity, "an unset affinity keeps the HA default")
 }
 
+func TestDesiredMariaDB_PVCRetentionPolicy(t *testing.T) {
+	for _, topology := range []string{"", "replication", "galera"} {
+		h := newSyncHarness(t, topology, nil)
+		mdb, err := desiredMariaDB(h.Context)
+		require.NoError(t, err)
+		assert.Equal(t, &mariadbv1alpha1.StatefulSetPersistentVolumeClaimRetentionPolicy{
+			WhenDeleted: mariadbv1alpha1.PersistentVolumeClaimRetentionPolicyDelete,
+			WhenScaled:  mariadbv1alpha1.PersistentVolumeClaimRetentionPolicyRetain,
+		}, mdb.Spec.Storage.PVCRetentionPolicy, "topology %q", topology)
+	}
+}
+
 func TestDesiredMariaDB_NoTopologySpreadByDefault(t *testing.T) {
 	h := newSyncHarness(t, "galera", nil)
 	mdb, err := desiredMariaDB(h.Context)
