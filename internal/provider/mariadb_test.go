@@ -321,3 +321,38 @@ func TestHasLegacyUpdateManager(t *testing.T) {
 		{Manager: legacyFieldManager, Operation: metav1.ManagedFieldsOperationUpdate},
 	}))
 }
+
+func TestCleanupMariaDB_DeletesDataPVCs(t *testing.T) {
+	pvc := func(name string, labels map[string]string) *corev1.PersistentVolumeClaim {
+		return &corev1.PersistentVolumeClaim{ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: "default", Labels: labels}}
+	}
+	withRole := func(labels map[string]string, role string) map[string]string {
+		labels["pvc.k8s.mariadb.com/role"] = role
+		return labels
+	}
+	h := newSyncHarness(t, "galera", nil,
+		&mariadbv1alpha1.MariaDB{ObjectMeta: metav1.ObjectMeta{Name: "test", Namespace: "default"}},
+		pvc("storage-test-0", withRole(mariadbPodLabels("test"), "storage")),
+		pvc("galera-test-0", withRole(mariadbPodLabels("test"), "config")),
+		pvc("storage-other-0", withRole(mariadbPodLabels("other"), "storage")),
+		pvc("test-maxscale-0", maxScalePodLabels(maxScaleName("test"))),
+		pvc("backup-staging", map[string]string{"app.kubernetes.io/instance": "test"}),
+	)
+
+	require.NoError(t, CleanupMariaDB(h.Context))
+
+	pvcs := &corev1.PersistentVolumeClaimList{}
+	require.NoError(t, h.List(pvcs))
+	var names []string
+	for _, p := range pvcs.Items {
+		names = append(names, p.Name)
+	}
+	assert.ElementsMatch(t, []string{"storage-other-0", "test-maxscale-0", "backup-staging"}, names,
+		"only the Instance's MariaDB PVCs are deleted")
+
+	exists, err := h.Exists(&mariadbv1alpha1.MariaDB{}, "test")
+	require.NoError(t, err)
+	assert.False(t, exists)
+
+	require.NoError(t, CleanupMariaDB(h.Context), "a repeated cleanup must not fail")
+}

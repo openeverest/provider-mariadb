@@ -481,8 +481,12 @@ func resolveHost(c *controller.Context, serviceName string) string {
 // CleanupMariaDB deletes the MaxScale and MariaDB CRs when the Instance is being
 // deleted. Both are owned by the Instance (via c.ObjectMeta), so cascaded GC
 // handles child resources automatically. This explicit delete ensures the operator
-// performs any finalizer-driven cleanup (e.g., releasing PVCs via operator policy).
-// MaxScale goes first so it stops managing the servers before they disappear.
+// performs any finalizer-driven cleanup. MaxScale goes first so it stops managing
+// the servers before they disappear.
+//
+// The data PVCs are deleted here as well. The StatefulSet's pvcRetentionPolicy only
+// covers StatefulSets created with it: the operator does not update the policy of an
+// existing StatefulSet, and ignores it before Kubernetes 1.32.
 func CleanupMariaDB(c *controller.Context) error {
 	l := log.FromContext(c.Context())
 	l.Info("Cleaning up MariaDB cluster", "cluster", c.Name())
@@ -499,6 +503,14 @@ func CleanupMariaDB(c *controller.Context) error {
 	}
 	if err := c.Delete(mariadbCR); client.IgnoreNotFound(err) != nil {
 		return fmt.Errorf("delete MariaDB: %w", err)
+	}
+
+	// The StatefulSet labels its PVCs with its selector labels, so this matches the
+	// storage and Galera config PVCs, and no backup, restore or MaxScale PVC. A PVC
+	// still mounted is removed once its pod is gone.
+	if err := c.Client().DeleteAllOf(c.Context(), &corev1.PersistentVolumeClaim{},
+		client.InNamespace(c.Namespace()), client.MatchingLabels(mariadbPodLabels(c.Name()))); err != nil {
+		return fmt.Errorf("delete MariaDB PVCs: %w", err)
 	}
 
 	return nil
