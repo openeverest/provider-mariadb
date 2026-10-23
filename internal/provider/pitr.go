@@ -199,8 +199,8 @@ func reconcilePITRBaseBackup(
 }
 
 // reconcilePITR reconciles the PointInTimeRecovery CR that configures binary log
-// archival to the storage and references the full base backup. Compression,
-// archiveTimeout and strictMode use the operator defaults.
+// archival to the storage and references the full base backup. New CRs compress
+// binary logs with zstd; archiveTimeout and strictMode use the operator defaults.
 func reconcilePITR(
 	c *controller.Context,
 	storageName string,
@@ -218,6 +218,7 @@ func reconcilePITR(
 		// so the timeline is not silently rebased.
 		if pitr.ResourceVersion == "" {
 			pitr.Spec.PhysicalBackupRef = mariadbv1alpha1.LocalObjectReference{Name: baseName}
+			pitr.Spec.Compression = mariadbv1alpha1.CompressZstd
 		}
 		pitr.Spec.PointInTimeRecoveryStorage = mariadbv1alpha1.PointInTimeRecoveryStorage{S3: s3}
 		// Owned by the Instance (not the MariaDB) so the Instance reconciler's
