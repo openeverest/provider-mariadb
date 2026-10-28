@@ -4,7 +4,7 @@ go 1.27.1
 
 require (
 	github.com/mariadb-operator/mariadb-operator/v26 v26.10.1
-	github.com/openeverest/openeverest/v2 v2.0.0-dev.2.0.20261027055245-0730d3d500c1
+	github.com/openeverest/openeverest/v2 v2.0.0-dev.4
 	github.com/prometheus-operator/prometheus-operator/pkg/apis/monitoring v0.91.0
 	github.com/robfig/cron/v3 v3.0.1
 	github.com/stretchr/testify v1.12.1
