@@ -263,14 +263,14 @@ spec:
             enabled:
               fieldParams:
                 defaultValue: false
-                helperText: Deploys the metrics exporter and a Prometheus ServiceMonitor. Requires the Prometheus Operator CRDs.
+                helperText: Deploys the metrics exporter and a Prometheus ServiceMonitor. The ServiceMonitor requires the Prometheus Operator CRDs.
                 label: Enable metrics
               path: spec.components.monitoring.parameters.enabled
               uiType: toggle
             victoriaMetrics:
               fieldParams:
                 defaultValue: false
-                helperText: Also creates a VMServiceScrape for the VictoriaMetrics operator. Requires metrics to be enabled.
+                helperText: Creates a VMServiceScrape for the VictoriaMetrics operator instead of the ServiceMonitor. Requires metrics to be enabled.
                 label: VictoriaMetrics
               path: spec.components.monitoring.parameters.victoriaMetrics.enabled
               uiType: toggle
@@ -509,14 +509,14 @@ spec:
             enabled:
               fieldParams:
                 defaultValue: false
-                helperText: Deploys the metrics exporter and a Prometheus ServiceMonitor. Requires the Prometheus Operator CRDs.
+                helperText: Deploys the metrics exporter and a Prometheus ServiceMonitor. The ServiceMonitor requires the Prometheus Operator CRDs.
                 label: Enable metrics
               path: spec.components.monitoring.parameters.enabled
               uiType: toggle
             victoriaMetrics:
               fieldParams:
                 defaultValue: false
-                helperText: Also creates a VMServiceScrape for the VictoriaMetrics operator. Requires metrics to be enabled.
+                helperText: Creates a VMServiceScrape for the VictoriaMetrics operator instead of the ServiceMonitor. Requires metrics to be enabled.
                 label: VictoriaMetrics
               path: spec.components.monitoring.parameters.victoriaMetrics.enabled
               uiType: toggle
@@ -744,14 +744,14 @@ spec:
             enabled:
               fieldParams:
                 defaultValue: false
-                helperText: Deploys the metrics exporter and a Prometheus ServiceMonitor. Requires the Prometheus Operator CRDs.
+                helperText: Deploys the metrics exporter and a Prometheus ServiceMonitor. The ServiceMonitor requires the Prometheus Operator CRDs.
                 label: Enable metrics
               path: spec.components.monitoring.parameters.enabled
               uiType: toggle
             victoriaMetrics:
               fieldParams:
                 defaultValue: false
-                helperText: Also creates a VMServiceScrape for the VictoriaMetrics operator. Requires metrics to be enabled.
+                helperText: Creates a VMServiceScrape for the VictoriaMetrics operator instead of the ServiceMonitor. Requires metrics to be enabled.
                 label: VictoriaMetrics
               path: spec.components.monitoring.parameters.victoriaMetrics.enabled
               uiType: toggle

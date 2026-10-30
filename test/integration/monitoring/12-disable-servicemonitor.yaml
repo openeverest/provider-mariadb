@@ -1,0 +1,11 @@
+# Disable the ServiceMonitor while keeping the exporter.
+apiVersion: core.openeverest.io/v1alpha1
+kind: Instance
+metadata:
+  name: test-instance-monitoring
+spec:
+  components:
+    monitoring:
+      parameters:
+        serviceMonitor:
+          enabled: false

@@ -145,6 +145,13 @@
   verbs:
     - update
 - apiGroups:
+    - monitoring.coreos.com
+  resources:
+    - servicemonitors
+  verbs:
+    - delete
+    - get
+- apiGroups:
     - operator.victoriametrics.com
   resources:
     - vmservicescrapes

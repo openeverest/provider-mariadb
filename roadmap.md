@@ -8,7 +8,7 @@ Everything below is expressed in terms of the three moving parts:
 - **SDK** — `github.com/openeverest/openeverest/v2` (`Instance` API, `provider-runtime/controller`
   helpers, backup/BackupClass/BackupStorage types, maintenance gating).
 - **Operator** — `github.com/mariadb-operator/mariadb-operator/v26` (`MariaDB`, `MaxScale`,
-  `Backup`, `PhysicalBackup`, `PointInTimeRecovery`, `Restore` CRs). Baseline: **26.10.1**.
+  `Backup`, `PhysicalBackup`, `PointInTimeRecovery`, `Restore` CRs). Baseline: **26.10.2**.
 - **Provider** — this repo (`definition/`, `internal/provider/`, `charts/`).
 
 The backlog lives in GitHub issues, labelled `priority/critical`,
@@ -34,7 +34,7 @@ Source of truth: `internal/provider/`, `definition/`, [README](README.md#capabil
 | Scheduling | ✅ | affinity (no `podAffinity`), nodeSelector, tolerations, topology spread |
 | TLS | ✅ | on by default, opt-in `required`, Galera SST TLS, CA in connection Secret; cert-manager open ([#39]) |
 | Exposure | ✅ | ClusterIP / LoadBalancer / NodePort on the primary (HA) or general Service; read Service open ([#105]) |
-| Monitoring | ✅ | `monitoring` component → mysqld-exporter + ServiceMonitor; discovery label ([#92]), alerts ([#103]) open |
+| Monitoring | ✅ | `monitoring` component → mysqld-exporter + ServiceMonitor and/or VMServiceScrape; discovery label ([#92]), alerts ([#103]) open |
 | Logical backups (on demand + scheduled) | ✅ | `mariadb` BackupClass, `type: logical`, S3 only |
 | Physical backups (on demand + scheduled) | ✅ | `type: physical` (`mariadb-backup`), S3 only |
 | Restore — logical in place | ✅ | `SyncRestore` → operator `Restore` |

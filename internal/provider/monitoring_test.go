@@ -140,6 +140,9 @@ func TestBuildMetrics_EnabledWithImageOverride(t *testing.T) {
 	if metrics.ServiceMonitor.ScrapeTimeout != "10s" {
 		t.Errorf("unexpected scrapeTimeout: %q", metrics.ServiceMonitor.ScrapeTimeout)
 	}
+	if !ptr.Deref(metrics.ServiceMonitor.Enabled, false) {
+		t.Error("expected the ServiceMonitor to be enabled by default")
+	}
 }
 
 func TestBuildMetrics_ExporterResources(t *testing.T) {
@@ -203,7 +206,7 @@ func TestBuildMetrics_EnabledAsString(t *testing.T) {
 
 // newVictoriaMetricsContext builds a controller.Context for an Instance with
 // the given monitoring parameters and a fake client whose REST mapper serves
-// the VMServiceScrape CRD when crdInstalled is set.
+// the VMServiceScrape and ServiceMonitor CRDs when crdInstalled is set.
 func newVictoriaMetricsContext(t *testing.T, params string, crdInstalled bool, objs ...client.Object) *controller.Context {
 	t.Helper()
 	scheme := runtime.NewScheme()
@@ -216,6 +219,7 @@ func newVictoriaMetricsContext(t *testing.T, params string, crdInstalled bool, o
 	}
 	if crdInstalled {
 		mapper.Add(vmServiceScrapeGVK, meta.RESTScopeNamespace)
+		mapper.Add(serviceMonitorGVK, meta.RESTScopeNamespace)
 	}
 
 	instance := &corev1alpha1.Instance{
@@ -393,4 +397,108 @@ func TestValidateMonitoring_VictoriaMetrics(t *testing.T) {
 			require.ErrorContains(t, err, tt.wantErr)
 		})
 	}
+}
+
+func TestIsServiceMonitorEnabled(t *testing.T) {
+	tests := []struct {
+		name   string
+		params string
+		want   bool
+	}{
+		{name: "metrics disabled", params: `{"serviceMonitor":{"enabled":true}}`, want: false},
+		{name: "default", params: `{"enabled":true}`, want: true},
+		{name: "explicitly disabled", params: `{"enabled":true,"serviceMonitor":{"enabled":"false"}}`, want: false},
+		{name: "VictoriaMetrics default", params: `{"enabled":true,"victoriaMetrics":{"enabled":true}}`, want: false},
+		{
+			name:   "VictoriaMetrics with ServiceMonitor",
+			params: `{"enabled":true,"serviceMonitor":{"enabled":true},"victoriaMetrics":{"enabled":true}}`,
+			want:   true,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			var params components.MonitoringParameters
+			require.NoError(t, json.Unmarshal([]byte(tt.params), &params))
+			assert.Equal(t, tt.want, isServiceMonitorEnabled(&params))
+		})
+	}
+	assert.False(t, isServiceMonitorEnabled(nil))
+}
+
+func TestBuildMetrics_VictoriaMetricsDisablesServiceMonitor(t *testing.T) {
+	c := newVictoriaMetricsContext(t, `{"enabled":true,"victoriaMetrics":{"enabled":true}}`, true)
+	metrics, err := buildMetrics(c)
+	require.NoError(t, err)
+	require.NotNil(t, metrics.ServiceMonitor.Enabled)
+	assert.False(t, *metrics.ServiceMonitor.Enabled)
+}
+
+// serviceMonitorFor returns the ServiceMonitor the operator creates for the
+// given MariaDB.
+func serviceMonitorFor(mdb *mariadbv1alpha1.MariaDB) *unstructured.Unstructured {
+	sm := &unstructured.Unstructured{}
+	sm.SetGroupVersionKind(serviceMonitorGVK)
+	sm.SetName("test-metrics")
+	sm.SetNamespace("default")
+	sm.SetOwnerReferences([]metav1.OwnerReference{{
+		APIVersion: "k8s.mariadb.com/v1alpha1", Kind: "MariaDB", Name: mdb.Name,
+		UID: mdb.UID, Controller: ptr.To(true),
+	}})
+	return sm
+}
+
+func TestSyncServiceMonitor(t *testing.T) {
+	disabled := func() *mariadbv1alpha1.MariaDB {
+		mdb := metricsMariaDB(0)
+		mdb.UID = "mdb-uid"
+		mdb.Spec.Metrics.ServiceMonitor.Enabled = ptr.To(false)
+		return mdb
+	}
+	smExists := func(t *testing.T, c *controller.Context) bool {
+		t.Helper()
+		sm := &unstructured.Unstructured{}
+		sm.SetGroupVersionKind(serviceMonitorGVK)
+		err := c.Get(sm, "test-metrics")
+		if apierrors.IsNotFound(err) {
+			return false
+		}
+		require.NoError(t, err)
+		return true
+	}
+
+	t.Run("deletes the operator ServiceMonitor once disabled", func(t *testing.T) {
+		mdb := disabled()
+		c := newVictoriaMetricsContext(t, `{"enabled":true,"victoriaMetrics":{"enabled":true}}`, true, mdb, serviceMonitorFor(mdb))
+		require.NoError(t, SyncServiceMonitor(c))
+		assert.False(t, smExists(t, c))
+	})
+
+	t.Run("waits for the MariaDB to disable it", func(t *testing.T) {
+		mdb := metricsMariaDB(0)
+		mdb.UID = "mdb-uid"
+		c := newVictoriaMetricsContext(t, `{"enabled":true,"serviceMonitor":{"enabled":false}}`, true, mdb, serviceMonitorFor(mdb))
+		require.NoError(t, SyncServiceMonitor(c))
+		assert.True(t, smExists(t, c))
+	})
+
+	t.Run("keeps it while enabled", func(t *testing.T) {
+		mdb := disabled()
+		c := newVictoriaMetricsContext(t, `{"enabled":true}`, true, mdb, serviceMonitorFor(mdb))
+		require.NoError(t, SyncServiceMonitor(c))
+		assert.True(t, smExists(t, c))
+	})
+
+	t.Run("keeps a ServiceMonitor the MariaDB does not control", func(t *testing.T) {
+		mdb := disabled()
+		foreign := serviceMonitorFor(mdb)
+		foreign.SetOwnerReferences(nil)
+		c := newVictoriaMetricsContext(t, `{"enabled":true,"serviceMonitor":{"enabled":false}}`, true, mdb, foreign)
+		require.NoError(t, SyncServiceMonitor(c))
+		assert.True(t, smExists(t, c))
+	})
+
+	t.Run("no CRD", func(t *testing.T) {
+		c := newVictoriaMetricsContext(t, `{"enabled":true,"serviceMonitor":{"enabled":false}}`, false, disabled())
+		require.NoError(t, SyncServiceMonitor(c))
+	})
 }

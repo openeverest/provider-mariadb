@@ -8,8 +8,8 @@
 #   3. Operator running
 #   4. Provider controller running
 #   5. The ServiceMonitor CRD (monitoring.coreos.com) present in the cluster —
-#      e.g. from the kube-prometheus-stack. The mariadb-operator couples the
-#      exporter with a ServiceMonitor, so metrics require this CRD.
+#      e.g. from the kube-prometheus-stack. It is not required when the
+#      ServiceMonitor is disabled, e.g. when scraping with VictoriaMetrics.
 apiVersion: core.openeverest.io/v1alpha1
 kind: Instance
 metadata:
@@ -33,23 +33,26 @@ spec:
       # resolves it from the selected version or the provider default.
       # image: prom/mysqld-exporter:v0.15.1
       parameters:
-        # Enable metrics exposure. Enabling this deploys the exporter and (given
-        # the operator coupling) a ServiceMonitor for Prometheus scraping.
+        # Enable metrics exposure. Enabling this deploys the exporter and a
+        # ServiceMonitor for Prometheus scraping.
         enabled: true
         serviceMonitor:
+          # Optional; defaults to true, or to false when victoriaMetrics is
+          # enabled. Disabling it deletes an existing ServiceMonitor.
+          # enabled: true
           # Label selector value Prometheus uses to discover ServiceMonitors,
           # e.g. the kube-prometheus-stack release name.
           prometheusRelease: kube-prometheus-stack
           # Optional scrape tuning.
           interval: 30s
           scrapeTimeout: 10s
-        # Optional: also create a VMServiceScrape for the VictoriaMetrics
-        # operator. Requires the VMServiceScrape CRD (operator.victoriametrics.com)
-        # and a VMAgent that selects it. It takes over the VMServiceScrape the
-        # VictoriaMetrics Prometheus converter creates from the ServiceMonitor,
-        # so the exporter is scraped once.
-        victoriaMetrics:
-          enabled: true
-          # Optional; defaults to the ServiceMonitor settings above.
-          # interval: 30s
-          # scrapeTimeout: 10s
+        # Optional: scrape with the VictoriaMetrics operator instead. Creates a
+        # VMServiceScrape and, unless serviceMonitor.enabled is set, no
+        # ServiceMonitor, so the exporter is scraped once. Requires the
+        # VMServiceScrape CRD (operator.victoriametrics.com) and a VMAgent that
+        # selects it.
+        # victoriaMetrics:
+        #   enabled: true
+        #   # Optional; defaults to the ServiceMonitor settings above.
+        #   interval: 30s
+        #   scrapeTimeout: 10s
