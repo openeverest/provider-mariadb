@@ -10,6 +10,12 @@
 - apiGroups:
     - ""
   resources:
+    - persistentvolumeclaims
+  verbs:
+    - deletecollection
+- apiGroups:
+    - ""
+  resources:
     - pods
     - services
   verbs:

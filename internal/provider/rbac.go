@@ -56,6 +56,9 @@ package provider
 // +kubebuilder:rbac:groups="",resources=secrets,verbs=get;list;watch;create;update;patch
 // +kubebuilder:rbac:groups="",resources=services,verbs=get;list;watch
 
+// PersistentVolumeClaims — Cleanup deletes the MariaDB data PVCs with the Instance.
+// +kubebuilder:rbac:groups="",resources=persistentvolumeclaims,verbs=deletecollection
+
 // Pods — the runtime counts the labelled component pods into status.components.
 // +kubebuilder:rbac:groups="",resources=pods,verbs=get;list;watch
 

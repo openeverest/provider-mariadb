@@ -4,7 +4,8 @@
 # Provisions a real single-node MariaDB through the bundled mariadb-operator,
 # waits for it to become Running, and verifies that a client can authenticate
 # with the credentials published in the connection Secret. Finally it tears the
-# Instance down and asserts the MariaDB CR is garbage-collected.
+# Instance down, asserts the MariaDB CR and its data PVC are deleted, and
+# re-creates the Instance under the same name on a fresh datadir.
 apiVersion: chainsaw.kyverno.io/v1alpha1
 kind: Test
 metadata:
@@ -140,6 +141,19 @@ spec:
         - assert:
             file: 13-assert.yaml
 
+    # Leave a marker in the datadir so the re-created Instance can prove it got a
+    # fresh one.
+    - name: write-marker
+      try:
+        - script:
+            content: |
+              set -eu
+              root=$(kubectl -n "$NAMESPACE" get secret everest-secrets-test-instance-root \
+                -o jsonpath='{.data.root-password}' | base64 -d)
+              kubectl -n "$NAMESPACE" exec test-instance-0 -c mariadb -- \
+                env MYSQL_PWD="$root" mariadb -uroot -e 'CREATE DATABASE pvc_marker'
+
+    # Deleting the Instance deletes its data PVC (#96).
     - name: delete-instance
       try:
         - delete:
@@ -161,3 +175,31 @@ spec:
             timeout: 3m
             for:
               deletion: {}
+        - wait:
+            apiVersion: v1
+            kind: PersistentVolumeClaim
+            name: storage-test-instance-0
+            timeout: 2m
+            for:
+              deletion: {}
+
+    # A same-name Instance starts on a new datadir: it becomes Ready and the
+    # marker is gone.
+    - name: recreate-instance
+      timeouts:
+        assert: 8m
+      try:
+        - apply:
+            file: 10-create-instance.yaml
+        - assert:
+            file: 11-assert.yaml
+        - script:
+            content: |
+              set -eu
+              root=$(kubectl -n "$NAMESPACE" get secret everest-secrets-test-instance-root \
+                -o jsonpath='{.data.root-password}' | base64 -d)
+              found=$(kubectl -n "$NAMESPACE" exec test-instance-0 -c mariadb -- \
+                env MYSQL_PWD="$root" mariadb -uroot -Nse \
+                "SELECT COUNT(*) FROM information_schema.schemata WHERE schema_name = 'pvc_marker'")
+              echo "pvc_marker databases: $found"
+              test "$found" = 0
