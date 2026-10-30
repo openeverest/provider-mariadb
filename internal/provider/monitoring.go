@@ -50,6 +50,10 @@ var vmServiceScrapeGVK = schema.GroupVersionKind{
 	Kind:    "VMServiceScrape",
 }
 
+// serviceMonitorGVK identifies the Prometheus Operator ServiceMonitor. It is
+// handled as unstructured so its CRD is only needed when one exists.
+var serviceMonitorGVK = monitoringv1.SchemeGroupVersion.WithKind(monitoringv1.ServiceMonitorsKind)
+
 // monitoringParams decodes the monitoring component parameters from the
 // Instance. It returns nil when the monitoring component is absent, making
 // monitoring opt-in.
@@ -69,10 +73,6 @@ func monitoringParams(c *controller.Context) (*components.MonitoringParameters, 
 // buildMetrics translates the monitoring component into the mariadb-operator's
 // spec.metrics. It returns nil when metrics are not enabled, so the operator
 // deploys no exporter and creates no Prometheus objects.
-//
-// The current mariadb-operator couples the exporter and the ServiceMonitor:
-// whenever metrics are enabled it reconciles a ServiceMonitor (and requires the
-// ServiceMonitor CRD to be present), so ServiceMonitor.Enabled has no effect yet.
 func buildMetrics(c *controller.Context) (*mariadbv1alpha1.MariadbMetrics, error) {
 	params, err := monitoringParams(c)
 	if err != nil {
@@ -94,6 +94,7 @@ func buildMetrics(c *controller.Context) (*mariadbv1alpha1.MariadbMetrics, error
 			PodMetadata: &mariadbv1alpha1.Metadata{Labels: c.PodLabels(common.ComponentMonitoring)},
 		},
 		ServiceMonitor: mariadbv1alpha1.ServiceMonitor{
+			Enabled:           ptr.To(isServiceMonitorEnabled(params)),
 			PrometheusRelease: params.ServiceMonitor.PrometheusRelease,
 			JobLabel:          params.ServiceMonitor.JobLabel,
 			Interval:          params.ServiceMonitor.Interval,
@@ -136,10 +137,62 @@ func resolveExporterImage(c *controller.Context) (string, error) {
 	return image, nil
 }
 
-
 // isVictoriaMetricsEnabled reports whether a VMServiceScrape is requested.
 func isVictoriaMetricsEnabled(params *components.MonitoringParameters) bool {
 	return params != nil && bool(params.Enabled) && bool(params.VictoriaMetrics.Enabled)
+}
+
+// isServiceMonitorEnabled reports whether the operator should create a
+// ServiceMonitor. When unset, it defaults to true unless VictoriaMetrics is
+// enabled, so the exporter is not scraped twice.
+func isServiceMonitorEnabled(params *components.MonitoringParameters) bool {
+	if params == nil || !params.Enabled {
+		return false
+	}
+	if params.ServiceMonitor.Enabled != nil {
+		return bool(*params.ServiceMonitor.Enabled)
+	}
+	return !bool(params.VictoriaMetrics.Enabled)
+}
+
+// SyncServiceMonitor deletes the operator's ServiceMonitor when metrics are
+// enabled but the ServiceMonitor is not. The mariadb-operator stops reconciling
+// it once spec.metrics.serviceMonitor.enabled is false, but does not delete it.
+func SyncServiceMonitor(c *controller.Context) error {
+	params, err := monitoringParams(c)
+	if err != nil {
+		return err
+	}
+	if params == nil || !bool(params.Enabled) || isServiceMonitorEnabled(params) {
+		return nil
+	}
+
+	mdb := &mariadbv1alpha1.MariaDB{}
+	if err := c.Get(mdb, c.Name()); err != nil {
+		return fmt.Errorf("get MariaDB: %w", err)
+	}
+	// Wait until the disabled ServiceMonitor is visible on the MariaDB, so the
+	// operator does not recreate it from a stale spec. The MariaDB watch
+	// re-enqueues the Instance once it is.
+	if !mdb.AreMetricsEnabled() || mdb.IsServiceMonitorEnabled() {
+		return nil
+	}
+
+	svcMonitor := &unstructured.Unstructured{}
+	svcMonitor.SetGroupVersionKind(serviceMonitorGVK)
+	if err := c.Get(svcMonitor, mdb.MetricsKey().Name); err != nil {
+		if apierrors.IsNotFound(err) || meta.IsNoMatchError(err) {
+			return nil
+		}
+		return fmt.Errorf("get ServiceMonitor: %w", err)
+	}
+	if !metav1.IsControlledBy(svcMonitor, mdb) || svcMonitor.GetDeletionTimestamp() != nil {
+		return nil
+	}
+	if err := c.Delete(svcMonitor); err != nil {
+		return fmt.Errorf("delete ServiceMonitor %q: %w", svcMonitor.GetName(), err)
+	}
+	return nil
 }
 
 // vmServiceScrapeName returns the name of the VMServiceScrape for the given

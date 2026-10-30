@@ -83,9 +83,10 @@ type MonitoringParameters struct {
 // Prometheus apply sensible defaults when they are unset.
 type ServiceMonitorParameters struct {
 	// Enabled controls whether a Prometheus ServiceMonitor is created for the
-	// exporter. Defaults to true while metrics are enabled. The current
-	// mariadb-operator always creates the ServiceMonitor, so it cannot be set
-	// to false yet.
+	// exporter. Defaults to true while metrics are enabled, unless
+	// VictoriaMetrics is enabled, so the exporter is scraped once. When false,
+	// the ServiceMonitor CRD is not required and an existing ServiceMonitor is
+	// deleted.
 	// +optional
 	Enabled *FlexBool `json:"enabled,omitempty"`
 	// PrometheusRelease is the value of the `release` label added to the
@@ -108,7 +109,8 @@ type ServiceMonitorParameters struct {
 // (operator.victoriametrics.com) to be installed in the cluster.
 type VictoriaMetricsParameters struct {
 	// Enabled controls whether a VMServiceScrape is created for the exporter.
-	// Requires metrics to be enabled. Defaults to false.
+	// Requires metrics to be enabled. It also turns the ServiceMonitor off
+	// unless serviceMonitor.enabled is set explicitly. Defaults to false.
 	// +optional
 	Enabled FlexBool `json:"enabled,omitempty"`
 	// Interval at which the exporter is scraped (e.g. "30s"). Defaults to the

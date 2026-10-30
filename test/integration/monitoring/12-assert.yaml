@@ -1,0 +1,18 @@
+# The provider passes the disabled ServiceMonitor through to the MariaDB CR and
+# the exporter keeps running.
+apiVersion: k8s.mariadb.com/v1alpha1
+kind: MariaDB
+metadata:
+  name: test-instance-monitoring
+spec:
+  metrics:
+    enabled: true
+    serviceMonitor:
+      enabled: false
+---
+apiVersion: core.openeverest.io/v1alpha1
+kind: Instance
+metadata:
+  name: test-instance-monitoring
+status:
+  phase: Ready

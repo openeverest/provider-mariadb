@@ -1,0 +1,6 @@
+# The mariadb-operator does not delete a disabled ServiceMonitor; the provider
+# does.
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: test-instance-monitoring-metrics

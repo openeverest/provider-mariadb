@@ -39,6 +39,9 @@ package provider
 // +kubebuilder:rbac:groups=k8s.mariadb.com,resources=maxscales,verbs=get;list;watch;create;update;patch;delete
 // +kubebuilder:rbac:groups=k8s.mariadb.com,resources=maxscales/status,verbs=get
 
+// ServiceMonitor CRs — the operator does not delete the ServiceMonitor once disabled.
+// +kubebuilder:rbac:groups=monitoring.coreos.com,resources=servicemonitors,verbs=get;delete
+
 // VMServiceScrape CRs — VictoriaMetrics scraping of the metrics exporter.
 // +kubebuilder:rbac:groups=operator.victoriametrics.com,resources=vmservicescrapes,verbs=get;list;watch;create;update;patch;delete
 

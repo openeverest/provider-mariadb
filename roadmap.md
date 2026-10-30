@@ -8,7 +8,7 @@ Everything below is expressed in terms of the three moving parts:
 - **SDK** — `github.com/openeverest/openeverest/v2` (`Instance` API, `provider-runtime/controller`
   helpers, backup/BackupClass/BackupStorage types, maintenance gating).
 - **Operator** — `github.com/mariadb-operator/mariadb-operator/v26` (`MariaDB`, `MaxScale`,
-  `Backup`, `PhysicalBackup`, `PointInTimeRecovery`, `Restore` CRs). Baseline: **26.10.1**.
+  `Backup`, `PhysicalBackup`, `PointInTimeRecovery`, `Restore` CRs). Baseline: **26.10.2**.
 - **Provider** — this repo (`definition/`, `internal/provider/`, `charts/`).
 
 The backlog lives in GitHub issues, labelled `priority/critical`,
@@ -34,7 +34,7 @@ Source of truth: `internal/provider/`, `definition/`, [README](README.md#capabil
 | Scheduling | ✅ | affinity (no `podAffinity`), nodeSelector, tolerations, topology spread |
 | TLS | ✅ | on by default, opt-in `required`, Galera SST TLS, CA in connection Secret; cert-manager open ([#39]) |
 | Exposure | ✅ | ClusterIP / LoadBalancer / NodePort on the primary (HA) or general Service; read Service open ([#105]) |
-| Monitoring | ✅ | `monitoring` component → mysqld-exporter + ServiceMonitor; discovery label ([#92]), alerts ([#103]) open |
+| Monitoring | ✅ | `monitoring` component → mysqld-exporter + ServiceMonitor and/or VMServiceScrape; discovery label ([#92]), alerts ([#103]) open |
 | Logical backups (on demand + scheduled) | ✅ | `mariadb` BackupClass, `type: logical`, S3 only |
 | Physical backups (on demand + scheduled) | ✅ | `type: physical` (`mariadb-backup`), S3 only |
 | Restore — logical in place | ✅ | `SyncRestore` → operator `Restore` |
@@ -85,6 +85,7 @@ Must be closed before the pre-alpha banner can be removed. Ordered by risk.
 | [#103], [#92] | Alerting rules (`PrometheusRule`) and ServiceMonitor discovery labels |
 | [#104] | Runbooks: Galera bootstrap (`forceClusterBootstrapInPod`), switchover, suspend, restore |
 | [#119] | Re-creating a PITR-enabled Instance with the same name cannot archive binlogs |
+| [#131] | `verifyTLS: false` silently ignored; HTTPS S3 endpoints untested |
 
 ## 4. Good to have — `priority/nice-to-have`
 
@@ -103,6 +104,7 @@ Must be closed before the pre-alpha banner can be removed. Ordered by risk.
 | [#113] | Cross-cluster DR replica (operator multi-cluster topology) |
 | [#114] | PITR archival and recovery on Galera/standalone — **blocked upstream** (`docs/pitr.md`, mariadb-operator#1961) |
 | [#115] | Refresh mysqld-exporter / MaxScale versions |
+| [#132] | VolumeAttributesClass for engine storage (IOPS/throughput) |
 
 ### Known platform constraints
 
@@ -117,7 +119,7 @@ Must be closed before the pre-alpha banner can be removed. Ordered by risk.
 
 1. Safety for upgrades: #95, then #78 / #99 test coverage.
 2. Cleanup on deletion: #96, #119 (#93, #94, #97, #98, #118 done).
-3. Day-2: #100, #101, #103 + #92, #102, #104.
+3. Day-2: #100, #101, #103 + #92, #102, #104, #131.
 4. Nice-to-have items as demand appears.
 
 ## 6. Cross-cutting reminders
@@ -165,3 +167,5 @@ Must be closed before the pre-alpha banner can be removed. Ordered by risk.
 [#115]: https://github.com/openeverest/provider-mariadb/issues/115
 [#118]: https://github.com/openeverest/provider-mariadb/issues/118
 [#119]: https://github.com/openeverest/provider-mariadb/issues/119
+[#131]: https://github.com/openeverest/provider-mariadb/issues/131
+[#132]: https://github.com/openeverest/provider-mariadb/issues/132
