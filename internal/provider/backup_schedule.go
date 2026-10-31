@@ -178,7 +178,8 @@ func deleteScheduledPhysicalBackup(c *controller.Context, name string) error {
 // SyncScheduledBackups reconciles one operator backup CR (Backup or
 // PhysicalBackup, per each schedule's type) with spec.schedule per
 // InstanceBackupSchedule declared on the Instance, and prunes operator backups
-// for schedules that no longer exist. Individual runs are surfaced as Backup
+// for schedules that no longer exist. The CRs of a held storage are kept as
+// they are, and none is added for it. Individual runs are surfaced as Backup
 // CRs by Mirror.
 func SyncScheduledBackups(c *controller.Context) error {
 	backupCfg := c.Instance().Spec.Backup
@@ -189,9 +190,19 @@ func SyncScheduledBackups(c *controller.Context) error {
 		var mdb *mariadbv1alpha1.MariaDB
 		for i := range backupCfg.Storages {
 			storage := &backupCfg.Storages[i]
+			s3, err := backupStorageS3(c, storage.StorageRef.Name)
+			if err != nil {
+				return err
+			}
 			for j := range storage.Schedules {
 				schedule := &storage.Schedules[j]
 				name := scheduledBackupName(c.Name(), schedule.Name)
+				if s3 == nil {
+					// Keep the live CR, whichever its type.
+					desiredLogical[name] = true
+					desiredPhysical[name] = true
+					continue
+				}
 				params, err := parseBackupParams(rawParameters(schedule.Parameters))
 				if err != nil {
 					return err
@@ -209,12 +220,12 @@ func SyncScheduledBackups(c *controller.Context) error {
 				}
 				if isPhysical(params) {
 					desiredPhysical[name] = true
-					if err := reconcileScheduledPhysicalBackup(c, mdb, storage.StorageRef.Name, schedule, name, params); err != nil {
+					if err := reconcileScheduledPhysicalBackup(c, mdb, storage.StorageRef.Name, s3, schedule, name, params); err != nil {
 						return err
 					}
 				} else {
 					desiredLogical[name] = true
-					if err := reconcileScheduledBackup(c, mdb, storage.StorageRef.Name, schedule, name, params); err != nil {
+					if err := reconcileScheduledBackup(c, mdb, storage.StorageRef.Name, s3, schedule, name, params); err != nil {
 						return err
 					}
 				}
@@ -232,14 +243,12 @@ func reconcileScheduledBackup(
 	c *controller.Context,
 	mdb *mariadbv1alpha1.MariaDB,
 	storageName string,
+	s3 *mariadbv1alpha1.S3,
 	schedule *corev1alpha1.InstanceBackupSchedule,
 	name string,
 	params mariadbbackup.MariadbBackupParameters,
 ) error {
-	storage, err := buildOperatorS3Storage(c, storageName)
-	if err != nil {
-		return err
-	}
+	storage := mariadbv1alpha1.BackupStorage{S3: s3.DeepCopy()}
 	retention, err := deriveMaxRetention(schedule.Cron, schedule.Retention)
 	if err != nil {
 		return &controller.BackupConfigError{Reason: "InvalidSchedule", Message: err.Error()}
