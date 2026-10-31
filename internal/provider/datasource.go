@@ -92,12 +92,17 @@ func resolveBackupBootstrapFrom(
 	}
 
 	sourceInstance := sourceBackup.Spec.Origin.InstanceRef.Name
-	// Read the backup files from the source Instance's prefix in the storage it
-	// was written to. Logical and physical backups share the prefix; the
-	// operator only considers files of the requested content type.
-	s3, err := buildOperatorS3(c, sourceBackup.Spec.StorageRef.Name, sourceInstance)
+	// Logical and physical backups share the location; the operator only
+	// considers files of the requested content type.
+	s3, err := backupS3(c, sourceBackup)
 	if err != nil {
-		return nil, "", err
+		if controller.IsWaitError(err) {
+			return nil, "", err
+		}
+		return nil, "", &controller.DataSourceConfigError{
+			Reason:  corev1alpha1.ReasonDataSourceFailed,
+			Message: fmt.Sprintf("source Backup %q: %v", sourceBackup.Name, err),
+		}
 	}
 	bootstrap := &mariadbv1alpha1.BootstrapFrom{
 		S3:                s3,
