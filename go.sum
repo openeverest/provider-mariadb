@@ -247,8 +247,12 @@ github.com/opencontainers/go-digest v1.0.0 h1:apOUWs51W5PlhuyGyz9FCeeBIOUDA/6nW8
 github.com/opencontainers/go-digest v1.0.0/go.mod h1:0JzlMkj0TRzQZfJkVvzbP0HBR3IKzErnv2BNG4W4MAM=
 github.com/openeverest/openeverest/v2 v2.0.0-dev.2.0.20261105181435-0223b79fa57d h1:nmRNbU3ehy5uT4yw13lvA8tyW0aEl1L5RKZVgvsyoXc=
 github.com/openeverest/openeverest/v2 v2.0.0-dev.2.0.20261105181435-0223b79fa57d/go.mod h1:GGSgc2BmbCx7IRpx8gTO3+z040Cu4BCaafdGYrUlTC4=
+github.com/openeverest/openeverest/v2 v2.0.0-dev.2.0.20261108203023-87cec094317e h1:rhGlr4NTDuSKPiFKW8O8K5FH4ofo7WRKe8bFL6KM+0I=
+github.com/openeverest/openeverest/v2 v2.0.0-dev.2.0.20261108203023-87cec094317e/go.mod h1:pT9h7V53BkUSk6IDp3A3c3rhJYajhEH6KqB4oF76+bc=
 github.com/openeverest/provider-sdk v0.3.1-0.20261105152211-04995b27cda5 h1:ifkHoGWrkgOdnxWasmujiNQuAzGulGIOjiioZJxS9aE=
 github.com/openeverest/provider-sdk v0.3.1-0.20261105152211-04995b27cda5/go.mod h1:55V3TmgLk2BQVjpL5KACObP/ROFtGLcMYH5tqoR/zUY=
+github.com/openeverest/provider-sdk v0.3.1-0.20261108205846-d909142ae957 h1:AyhnAsofVwOE1cUlwp9k2EhXL3ZiMs78PBX7yQ5VtBg=
+github.com/openeverest/provider-sdk v0.3.1-0.20261108205846-d909142ae957/go.mod h1:XJnLk1rKdjm+EA7bchrd2yu5NmvkDCtEzuc+nftaxNA=
 github.com/philhofer/fwd v1.2.0 h1:e6DnBTl7vGY+Gz322/ASL4Gyp1FspeMvx1RNDoToZuM=
 github.com/philhofer/fwd v1.2.0/go.mod h1:RqIHx9QI14HlwKwm98g9Re5prTQ6LdeRQn+gXJFxsJM=
 github.com/pkg/browser v0.0.0-20240102092130-5ac0b6a4141c h1:+mdjkGKdHQG3305AYmdv1U2eRNDiU2ErMBj1gwrq8eQ=

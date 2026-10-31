@@ -5,6 +5,10 @@ kind: BackupClass
 metadata:
   name: mariadb
 spec:
+  backupStorageClasses:
+    - authModes:
+        - AccessKey
+      name: s3
   description: |
     BackupClass for the MariaDB provider, driven natively by the mariadb-operator
     to an S3-compatible object store; OpenEverest does not run any side-car Job for
