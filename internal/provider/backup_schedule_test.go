@@ -41,7 +41,7 @@ func newContextForInstance(t *testing.T, instance *corev1alpha1.Instance, objs .
 	scheme := newBackupTestScheme(t)
 	fakeClient := fake.NewClientBuilder().
 		WithScheme(scheme).
-		WithObjects(append([]client.Object{instance}, objs...)...).
+		WithObjects(append([]client.Object{instance, s3Credentials()}, objs...)...).
 		Build()
 	return controller.NewContext(context.Background(), fakeClient, instance, common.ProviderName)
 }
@@ -139,6 +139,8 @@ func TestSyncScheduledBackupsCreatesOperatorBackup(t *testing.T) {
 	assert.False(t, opBackup.Spec.Schedule.Suspend)
 	assert.Equal(t, []string{"--flush-privileges"}, opBackup.Spec.Args)
 	assert.Equal(t, 4*24*time.Hour, opBackup.Spec.MaxRetention.Duration)
+	require.NotNil(t, opBackup.Spec.Storage.S3)
+	assert.Equal(t, dbStoragePath, opBackup.Spec.Storage.S3.Prefix)
 	assert.Equal(t, "daily", opBackup.Labels[scheduleLabel])
 	require.NotNil(t, opBackup.Spec.InheritMetadata)
 	assert.Equal(t, "daily", opBackup.Spec.InheritMetadata.Labels[scheduleLabel])
@@ -162,6 +164,43 @@ func TestSyncScheduledBackupsDisabledScheduleSuspends(t *testing.T) {
 	require.NoError(t, c.Get(opBackup, scheduledBackupName("db", "daily")))
 	require.NotNil(t, opBackup.Spec.Schedule)
 	assert.True(t, opBackup.Spec.Schedule.Suspend)
+}
+
+func TestSyncScheduledBackupsHoldsStorage(t *testing.T) {
+	schedule := corev1alpha1.InstanceBackupSchedule{Name: "daily", Enabled: true, Cron: "0 0 * * *"}
+	mdb := &mariadbv1alpha1.MariaDB{ObjectMeta: metav1.ObjectMeta{Name: "db", Namespace: "ns"}}
+	rejected := func() *backupv1alpha1.BackupStorage {
+		bs := s3BackupStorage("s3", "https://minio.example.com:9000")
+		bs.Spec.TLS = &commonv1alpha1.TLSConfig{InsecureSkipVerify: true}
+		return bs
+	}
+
+	t.Run("keeps the live scheduled backup", func(t *testing.T) {
+		live := mariadbv1alpha1.BackupStorage{S3: &mariadbv1alpha1.S3{Bucket: "old", Prefix: "db"}}
+		existing := &mariadbv1alpha1.Backup{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:      scheduledBackupName("db", "daily"),
+				Namespace: "ns",
+				Labels:    map[string]string{instanceLabel: "db", scheduleLabel: "daily"},
+			},
+			Spec: mariadbv1alpha1.BackupSpec{Storage: live},
+		}
+		c := newContextForInstance(t, instanceWithSchedule(schedule, "s3"), mdb.DeepCopy(), existing, rejected())
+
+		require.NoError(t, SyncScheduledBackups(c))
+		opBackup := &mariadbv1alpha1.Backup{}
+		require.NoError(t, c.Get(opBackup, scheduledBackupName("db", "daily")))
+		assert.Equal(t, live, opBackup.Spec.Storage)
+		assert.Equal(t, corev1alpha1.ReasonTLSOptionUnsupported, storageReason(t, c, "s3"))
+	})
+
+	t.Run("creates no scheduled backup for a held storage", func(t *testing.T) {
+		c := newContextForInstance(t, instanceWithSchedule(schedule, "s3"), mdb.DeepCopy(), rejected())
+
+		require.NoError(t, SyncScheduledBackups(c))
+		assert.True(t, controller.IsNotFound(c.Get(&mariadbv1alpha1.Backup{}, scheduledBackupName("db", "daily"))))
+		assert.True(t, controller.IsNotFound(c.Get(&mariadbv1alpha1.PhysicalBackup{}, scheduledBackupName("db", "daily"))))
+	})
 }
 
 func TestSyncScheduledBackupsPrunesRemoved(t *testing.T) {

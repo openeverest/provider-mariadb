@@ -85,7 +85,7 @@ Must be closed before the pre-alpha banner can be removed. Ordered by risk.
 | [#103], [#92] | Alerting rules (`PrometheusRule`) and ServiceMonitor discovery labels |
 | [#104] | Runbooks: Galera bootstrap (`forceClusterBootstrapInPod`), switchover, suspend, restore |
 | [#119] | Re-creating a PITR-enabled Instance with the same name cannot archive binlogs |
-| [#131] | `verifyTLS: false` silently ignored; HTTPS S3 endpoints untested |
+| [#131] | `tls.insecureSkipVerify` is rejected (the operator cannot skip verification); HTTPS S3 endpoints untested |
 
 ## 4. Good to have — `priority/nice-to-have`
 

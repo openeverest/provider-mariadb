@@ -4,7 +4,7 @@ go 1.27.1
 
 require (
 	github.com/mariadb-operator/mariadb-operator/v26 v26.10.2
-	github.com/openeverest/openeverest/v2 v2.0.0-dev.4
+	github.com/openeverest/openeverest/v2 v2.0.0-dev.2.0.20261031165622-ef5e0b283d14
 	github.com/prometheus-operator/prometheus-operator/pkg/apis/monitoring v0.91.0
 	github.com/robfig/cron/v3 v3.0.1
 	github.com/stretchr/testify v1.12.1
@@ -37,6 +37,7 @@ require (
 	github.com/aws/smithy-go v1.28.1 // indirect
 	github.com/aymanbagabas/go-osc52/v2 v2.0.1 // indirect
 	github.com/beorn7/perks v1.0.1 // indirect
+	github.com/blang/semver/v4 v4.0.0 // indirect
 	github.com/cert-manager/cert-manager v1.20.3 // indirect
 	github.com/cespare/xxhash/v2 v2.3.0 // indirect
 	github.com/charmbracelet/bubbles v1.0.0 // indirect
@@ -105,7 +106,7 @@ require (
 	github.com/oasdiff/yaml v0.1.1 // indirect
 	github.com/oasdiff/yaml3 v0.0.14 // indirect
 	github.com/opencontainers/go-digest v1.0.0 // indirect
-	github.com/openeverest/provider-sdk v0.3.1-0.20261009133615-c77f6c55210d // indirect
+	github.com/openeverest/provider-sdk v0.3.1-0.20261031160606-37ff3b2b4660 // indirect
 	github.com/philhofer/fwd v1.2.0 // indirect
 	github.com/pkg/browser v0.0.0-20240102092130-5ac0b6a4141c // indirect
 	github.com/pmezard/go-difflib v1.0.1-0.20181226105442-5d4384ee4fb2 // indirect

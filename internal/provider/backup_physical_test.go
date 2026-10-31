@@ -63,6 +63,7 @@ func TestSyncBackupDispatchesToPhysical(t *testing.T) {
 	sdkBackup.Spec.Parameters = &runtime.RawExtension{
 		Raw: []byte(`{"type":"physical","compression":"bzip2","target":"Replica"}`),
 	}
+	sdkBackup.Status.Path = dbStoragePath
 	c := newContextWith(t, mdb, s3BackupStorage("s3", "https://minio.example.com:9000"), sdkBackup)
 
 	p := &MariaDBProvider{}
@@ -80,6 +81,7 @@ func TestSyncBackupDispatchesToPhysical(t *testing.T) {
 	assert.True(t, opBackup.Spec.MariaDBRef.WaitForIt)
 	require.NotNil(t, opBackup.Spec.Storage.S3)
 	assert.Equal(t, "minio.example.com:9000", opBackup.Spec.Storage.S3.Endpoint)
+	assert.Equal(t, dbStoragePath, opBackup.Spec.Storage.S3.Prefix)
 	assert.Equal(t, mariadbv1alpha1.CompressAlgorithm("bzip2"), opBackup.Spec.Compression)
 	require.NotNil(t, opBackup.Spec.Target)
 	assert.Equal(t, mariadbv1alpha1.PhysicalBackupTargetReplica, *opBackup.Spec.Target)
@@ -168,6 +170,7 @@ func TestResolveBootstrapFrom(t *testing.T) {
 		source.Spec.Origin.InstanceRef = &commonv1alpha1.ObjectRef{Name: "source-db"}
 		source.Status.State = backupv1alpha1.BackupStateSucceeded
 		source.Status.CompletedAt = &completedAt
+		source.Status.Path = "team/backups/ns/source-db/uid-src/s3"
 		c := newContextForInstance(t, instanceSeededFrom("backup-1"),
 			source, s3BackupStorage("s3", "https://minio.example.com:9000"))
 
@@ -175,7 +178,7 @@ func TestResolveBootstrapFrom(t *testing.T) {
 		require.NoError(t, err)
 		require.NotNil(t, got)
 		require.NotNil(t, got.S3)
-		assert.Equal(t, "source-db", got.S3.Prefix)
+		assert.Equal(t, "team/backups/ns/source-db/uid-src/s3", got.S3.Prefix)
 		assert.Equal(t, "source-db", sourceInstance)
 		assert.Equal(t, mariadbv1alpha1.BackupContentTypeLogical, got.BackupContentType)
 		require.NotNil(t, got.TargetRecoveryTime)
@@ -207,24 +210,40 @@ func TestResolveBootstrapFrom(t *testing.T) {
 		assert.ErrorAs(t, err, &dsErr)
 	})
 
-	t.Run("succeeded physical source builds bootstrapFrom pinned to the source", func(t *testing.T) {
+	t.Run("succeeded physical source without a recorded location reads its origin instance's path", func(t *testing.T) {
 		source := physicalBackup("backup-1")
 		source.Spec.Origin.Type = backupv1alpha1.BackupOriginTypeInstance
 		source.Spec.Origin.InstanceRef = &commonv1alpha1.ObjectRef{Name: "source-db"}
 		source.Status.State = backupv1alpha1.BackupStateSucceeded
 		source.Status.CompletedAt = &completedAt
+		sourceDB := &corev1alpha1.Instance{ObjectMeta: metav1.ObjectMeta{Name: "source-db", Namespace: "ns", UID: "uid-src"}}
 		c := newContextForInstance(t, instanceSeededFrom("backup-1"),
-			source, s3BackupStorage("s3", "https://minio.example.com:9000"))
+			source, sourceDB, s3BackupStorage("s3", "https://minio.example.com:9000"))
 
 		got, sourceInstance, err := resolveBootstrapFrom(c)
 		require.NoError(t, err)
 		require.NotNil(t, got)
 		require.NotNil(t, got.S3)
-		assert.Equal(t, "source-db", got.S3.Prefix)
+		assert.Equal(t, "team/backups/ns/source-db/uid-src/s3", got.S3.Prefix)
 		assert.Equal(t, "source-db", sourceInstance)
 		assert.Equal(t, mariadbv1alpha1.BackupContentTypePhysical, got.BackupContentType)
 		require.NotNil(t, got.TargetRecoveryTime)
 		assert.Equal(t, completedAt.Time, got.TargetRecoveryTime.Time)
+	})
+
+	t.Run("source backup in a storage the operator cannot read is a terminal seeding failure", func(t *testing.T) {
+		source := physicalBackup("backup-1")
+		source.Status.State = backupv1alpha1.BackupStateSucceeded
+		source.Status.Path = dbStoragePath
+		bs := s3BackupStorage("s3", "https://minio.example.com:9000")
+		bs.Spec.TLS = &commonv1alpha1.TLSConfig{InsecureSkipVerify: true}
+		c := newContextForInstance(t, instanceSeededFrom("backup-1"), source, bs)
+
+		_, _, err := resolveBootstrapFrom(c)
+		var dsErr *controller.DataSourceConfigError
+		require.ErrorAs(t, err, &dsErr)
+		assert.Equal(t, corev1alpha1.ReasonDataSourceFailed, dsErr.Reason)
+		assert.Contains(t, dsErr.Message, controller.ErrTLSOptionUnsupported.Error())
 	})
 }
 

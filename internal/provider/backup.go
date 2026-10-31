@@ -17,7 +17,6 @@ package provider
 import (
 	"encoding/json"
 	"fmt"
-	"strings"
 
 	mariadbv1alpha1 "github.com/mariadb-operator/mariadb-operator/v26/api/v1alpha1"
 	"k8s.io/apimachinery/pkg/api/meta"
@@ -27,20 +26,15 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
 
 	backupv1alpha1 "github.com/openeverest/openeverest/v2/api/backup/v1alpha1"
+	"github.com/openeverest/openeverest/v2/api/backup/v1alpha1/storageclasses"
 	apicommon "github.com/openeverest/openeverest/v2/api/common/v1alpha1"
+	corev1alpha1 "github.com/openeverest/openeverest/v2/api/core/v1alpha1"
 	"github.com/openeverest/openeverest/v2/provider-runtime/controller"
 
 	mariadbbackup "github.com/openeverest/provider-mariadb/definition/backupclasses/mariadb"
 )
 
 const (
-	// s3AccessKeyIDSecretKey is the Secret key holding the S3 access key id in
-	// a BackupStorage credentials Secret.
-	s3AccessKeyIDSecretKey = "AWS_ACCESS_KEY_ID"
-	// s3SecretAccessKeySecretKey is the Secret key holding the S3 secret access
-	// key in a BackupStorage credentials Secret.
-	s3SecretAccessKeySecretKey = "AWS_SECRET_ACCESS_KEY"
-
 	// backupTypeLogical selects a logical (mariadb-dump) backup.
 	backupTypeLogical = "logical"
 	// backupTypePhysical selects a physical (mariadb-backup) backup.
@@ -77,62 +71,111 @@ func rawParameters(p *runtime.RawExtension) []byte {
 	return p.Raw
 }
 
-// buildOperatorS3 resolves the named BackupStorage into the operator's S3 spec,
-// isolating objects under the given prefix (normally the owning Instance name,
-// or the source Instance name when bootstrapping a restore). Only S3-compatible
-// storages are supported; anything else is rejected as a configuration error.
-// It is shared by logical (Backup) and physical (PhysicalBackup) backups, which
-// wrap the same S3 spec in different storage types.
-func buildOperatorS3(c *controller.Context, storageName, prefix string) (*mariadbv1alpha1.S3, error) {
-	bs, err := c.BackupStorage(storageName)
+// operatorS3 renders the s3 BackupStorage bs into the operator's S3 spec, with
+// objects kept under prefix in the storage's bucket. It fails when the
+// operator cannot express the storage.
+func operatorS3(c *controller.Context, bs *backupv1alpha1.BackupStorage, prefix string) (*mariadbv1alpha1.S3, error) {
+	params, _, err := c.BackupStorageS3(bs)
 	if err != nil {
-		if apierrors.IsNotFound(err) {
-			return nil, controller.WaitFor(
-				fmt.Sprintf("BackupStorage %q not yet present", storageName))
-		}
 		return nil, err
 	}
-	if bs.Spec.S3 == nil {
-		return nil, &controller.BackupConfigError{
-			Reason:  "UnsupportedStorage",
-			Message: fmt.Sprintf("BackupStorage %q is not S3-compatible", storageName),
-		}
+	endpoint, err := params.Endpoint()
+	if err != nil {
+		return nil, err
 	}
-	s3 := bs.Spec.S3
+	// The operator can add a CA bundle but cannot skip certificate verification.
+	tls, err := c.BackupStorageTLS(bs, controller.TLSSupport{CustomCA: true})
+	if err != nil {
+		return nil, err
+	}
 
-	// The operator expects the endpoint without a scheme and derives TLS from
-	// the dedicated flag below.
-	endpoint := s3.EndpointURL
-	useTLS := strings.HasPrefix(endpoint, "https://")
-	endpoint = strings.TrimPrefix(endpoint, "https://")
-	endpoint = strings.TrimPrefix(endpoint, "http://")
-
-	credentialsSecret := s3.CredentialsSecretRef.Name
-	return &mariadbv1alpha1.S3{
-		Bucket:   s3.Bucket,
-		Endpoint: endpoint,
-		Region:   s3.Region,
+	credentialsSecret := bs.Spec.Authentication.CredentialsSecretRef.Name
+	s3 := &mariadbv1alpha1.S3{
+		Bucket:   bs.Spec.Location.Bucket,
+		Endpoint: endpoint.HostPort(),
+		Region:   params.Region,
 		Prefix:   prefix,
 		AccessKeyIdSecretKeyRef: &mariadbv1alpha1.SecretKeySelector{
 			LocalObjectReference: mariadbv1alpha1.LocalObjectReference{Name: credentialsSecret},
-			Key:                  s3AccessKeyIDSecretKey,
+			Key:                  storageclasses.KeyAWSAccessKeyID,
 		},
 		SecretAccessKeySecretKeyRef: &mariadbv1alpha1.SecretKeySelector{
 			LocalObjectReference: mariadbv1alpha1.LocalObjectReference{Name: credentialsSecret},
-			Key:                  s3SecretAccessKeySecretKey,
+			Key:                  storageclasses.KeyAWSSecretAccessKey,
 		},
-		TLS: &mariadbv1alpha1.TLSConfig{Enabled: useTLS},
-	}, nil
+		TLS: &mariadbv1alpha1.TLSConfig{Enabled: endpoint.Secure},
+	}
+	if ref := tls.CASecretKeyRef; ref != nil {
+		s3.TLS.CASecretKeyRef = &mariadbv1alpha1.SecretKeySelector{
+			LocalObjectReference: mariadbv1alpha1.LocalObjectReference{Name: ref.Name},
+			Key:                  ref.Key,
+		}
+	}
+	return s3, nil
 }
 
-// buildOperatorS3Storage wraps the resolved S3 spec in the operator's logical
-// Backup storage type, isolating the Instance's backups under its own prefix.
-func buildOperatorS3Storage(c *controller.Context, storageName string) (mariadbv1alpha1.BackupStorage, error) {
-	s3, err := buildOperatorS3(c, storageName, c.Name())
+// backupStorageS3 renders the spec.backup.storages entry naming the
+// BackupStorage name into the operator's S3 spec, with objects kept under the
+// path the runtime assigns to the entry. It returns nil when the entry is held:
+// the runtime does not let it be applied, or the operator cannot express it, in
+// which case the entry is rejected.
+func backupStorageS3(c *controller.Context, name string) (*mariadbv1alpha1.S3, error) {
+	storages, err := c.BackupStorages()
 	if err != nil {
-		return mariadbv1alpha1.BackupStorage{}, err
+		return nil, err
 	}
-	return mariadbv1alpha1.BackupStorage{S3: s3}, nil
+	for _, s := range storages {
+		if s.Name() != name {
+			continue
+		}
+		if !s.Apply() {
+			return nil, nil
+		}
+		s3, err := operatorS3(c, s.Storage, s.Path)
+		if err != nil {
+			c.RejectBackupStorage(name, err)
+			return nil, nil
+		}
+		return s3, nil
+	}
+	return nil, nil
+}
+
+// backupS3 renders the BackupStorage backup is kept in into the operator's S3
+// spec, pointing at the backup's data. A backup that records no location is
+// read from where its origin Instance writes its backups.
+func backupS3(c *controller.Context, backup *backupv1alpha1.Backup) (*mariadbv1alpha1.S3, error) {
+	name := backup.Spec.StorageRef.Name
+	bs, err := c.BackupStorage(name)
+	if err != nil {
+		if apierrors.IsNotFound(err) {
+			return nil, controller.WaitFor(fmt.Sprintf("BackupStorage %q not yet present", name))
+		}
+		return nil, err
+	}
+	location := controller.BackupLocation(backup, bs)
+	if location == "" {
+		ref := backup.Spec.Origin.InstanceRef
+		if ref == nil {
+			return nil, fmt.Errorf("backup %q records no location and has no origin instance", backup.Name)
+		}
+		origin := c.Instance()
+		if ref.Name != origin.Name {
+			origin = &corev1alpha1.Instance{}
+			if err := c.Get(origin, ref.Name); err != nil {
+				if apierrors.IsNotFound(err) {
+					return nil, fmt.Errorf("backup %q records no location and its origin instance %q no longer exists", backup.Name, ref.Name)
+				}
+				return nil, fmt.Errorf("get origin Instance %q: %w", ref.Name, err)
+			}
+		}
+		location = storageclasses.BackupPath(bs.Spec.Location, origin.Namespace, origin.Name, origin.UID, name)
+	}
+	s3, err := operatorS3(c, bs, location)
+	if err != nil {
+		return nil, fmt.Errorf("backup storage %q: %w", name, err)
+	}
+	return s3, nil
 }
 
 // SyncBackup creates or updates the mariadb-operator CR that backs up the
@@ -180,7 +223,7 @@ func (p *MariaDBProvider) SyncBackup(
 		// and backups are run-once, so only populate it on creation (empty
 		// ResourceVersion means the object does not exist yet).
 		if opBackup.ResourceVersion == "" {
-			storage, err := buildOperatorS3Storage(c, backup.Spec.StorageRef.Name)
+			s3, err := backupS3(c, backup)
 			if err != nil {
 				return err
 			}
@@ -188,7 +231,7 @@ func (p *MariaDBProvider) SyncBackup(
 				ObjectReference: mariadbv1alpha1.ObjectReference{Name: c.Name()},
 				WaitForIt:       true,
 			}
-			opBackup.Spec.Storage = storage
+			opBackup.Spec.Storage = mariadbv1alpha1.BackupStorage{S3: s3}
 			applyLogicalBackupParameters(&opBackup.Spec, params)
 		}
 		return controllerutil.SetControllerReference(backup, opBackup, c.Client().Scheme())

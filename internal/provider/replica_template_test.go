@@ -93,9 +93,33 @@ func TestSyncReplicaTemplate(t *testing.T) {
 		require.NotNil(t, tpl.Spec.Target)
 		assert.Equal(t, mariadbv1alpha1.PhysicalBackupTargetPreferReplica, *tpl.Spec.Target)
 		require.NotNil(t, tpl.Spec.Storage.S3)
-		assert.Equal(t, "db-replica", tpl.Spec.Storage.S3.Prefix)
+		assert.Equal(t, dbStoragePath+"/replica", tpl.Spec.Storage.S3.Prefix)
 		require.Len(t, tpl.OwnerReferences, 1)
 		assert.Equal(t, "MariaDB", tpl.OwnerReferences[0].Kind)
+	})
+
+	t.Run("keeps the live template while the storage is held", func(t *testing.T) {
+		live := mariadbv1alpha1.PhysicalBackupStorage{S3: &mariadbv1alpha1.S3{Bucket: "old", Prefix: "db-replica"}}
+		existing := &mariadbv1alpha1.PhysicalBackup{
+			ObjectMeta: metav1.ObjectMeta{Name: replicaTemplateName("db"), Namespace: "ns"},
+			Spec:       mariadbv1alpha1.PhysicalBackupSpec{Storage: live},
+		}
+		c := newContextForInstance(t, replicationInstance(3, true), replicationMariaDBWithReplicas(3), existing,
+			unacceptedBackupStorage("s3", "https://minio.example.com:9000"))
+		require.NoError(t, SyncReplicaTemplate(c))
+
+		tpl := &mariadbv1alpha1.PhysicalBackup{}
+		require.NoError(t, c.Get(tpl, replicaTemplateName("db")))
+		assert.Equal(t, live, tpl.Spec.Storage)
+	})
+
+	t.Run("creates no template for a held storage", func(t *testing.T) {
+		c := newContextForInstance(t, replicationInstance(3, true), replicationMariaDBWithReplicas(3),
+			unacceptedBackupStorage("s3", "https://minio.example.com:9000"))
+		require.NoError(t, SyncReplicaTemplate(c))
+
+		err := c.Get(&mariadbv1alpha1.PhysicalBackup{}, replicaTemplateName("db"))
+		assert.True(t, controller.IsNotFound(err))
 	})
 
 	t.Run("removes the template when the backup storage is removed", func(t *testing.T) {
