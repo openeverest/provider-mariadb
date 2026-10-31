@@ -41,7 +41,7 @@ func newContextForInstance(t *testing.T, instance *corev1alpha1.Instance, objs .
 	scheme := newBackupTestScheme(t)
 	fakeClient := fake.NewClientBuilder().
 		WithScheme(scheme).
-		WithObjects(append([]client.Object{instance}, objs...)...).
+		WithObjects(append([]client.Object{instance, s3Credentials()}, objs...)...).
 		Build()
 	return controller.NewContext(context.Background(), fakeClient, instance, common.ProviderName)
 }

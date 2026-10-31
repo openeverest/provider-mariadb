@@ -5,6 +5,7 @@
 #   displayName/description: human-readable metadata.
 #   supportedProviders: providers this class can be used with.
 #   executionMode: "ProviderManaged" (operator-native) or "Job".
+#   backupStorageClasses: BackupStorageClasses the engine writes to, with their auth modes.
 #   providerManaged.supportsPITR: advertise PITR capability to Restore validation.
 #   providerManaged.limits: caps the runtime enforces against Instance.spec.backup.
 #     maxStorages, maxPITREnabledStorages, maxSchedulesPerStorage — unset means unlimited.
@@ -26,6 +27,10 @@ description: |
 supportedProviders:
   - mariadb
 executionMode: ProviderManaged
+backupStorageClasses:
+  - name: s3
+    authModes:
+      - AccessKey
 
 providerManaged:
   supportsPITR: true

@@ -92,13 +92,13 @@ func buildOperatorS3(c *controller.Context, storageName, prefix string) (*mariad
 		}
 		return nil, err
 	}
-	if bs.Spec.S3 == nil {
+	s3, _, err := c.BackupStorageS3(bs)
+	if err != nil {
 		return nil, &controller.BackupConfigError{
 			Reason:  "UnsupportedStorage",
-			Message: fmt.Sprintf("BackupStorage %q is not S3-compatible", storageName),
+			Message: fmt.Sprintf("BackupStorage %q: %v", storageName, err),
 		}
 	}
-	s3 := bs.Spec.S3
 
 	// The operator expects the endpoint without a scheme and derives TLS from
 	// the dedicated flag below.
@@ -107,9 +107,9 @@ func buildOperatorS3(c *controller.Context, storageName, prefix string) (*mariad
 	endpoint = strings.TrimPrefix(endpoint, "https://")
 	endpoint = strings.TrimPrefix(endpoint, "http://")
 
-	credentialsSecret := s3.CredentialsSecretRef.Name
+	credentialsSecret := bs.Spec.Authentication.CredentialsSecretRef.Name
 	return &mariadbv1alpha1.S3{
-		Bucket:   s3.Bucket,
+		Bucket:   bs.Spec.Location.Bucket,
 		Endpoint: endpoint,
 		Region:   s3.Region,
 		Prefix:   prefix,

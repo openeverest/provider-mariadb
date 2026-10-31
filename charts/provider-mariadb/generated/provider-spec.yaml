@@ -217,7 +217,7 @@ spec:
                 policy:
                   uiType: widget
                   widgetType: podSchedulingPolicy
-              groupType: toggleable
+              groupType: bordered
               label: Pod scheduling policy
               uiType: group
             storageClass:
@@ -463,7 +463,7 @@ spec:
                 policy:
                   uiType: widget
                   widgetType: podSchedulingPolicy
-              groupType: toggleable
+              groupType: bordered
               label: Pod scheduling policy
               uiType: group
             storageClass:
@@ -698,7 +698,7 @@ spec:
                 policy:
                   uiType: widget
                   widgetType: podSchedulingPolicy
-              groupType: toggleable
+              groupType: bordered
               label: Pod scheduling policy
               uiType: group
             storageClass:

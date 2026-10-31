@@ -30,6 +30,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 
 	backupv1alpha1 "github.com/openeverest/openeverest/v2/api/backup/v1alpha1"
+	"github.com/openeverest/openeverest/v2/api/backup/v1alpha1/storageclasses"
 	commonv1alpha1 "github.com/openeverest/openeverest/v2/api/common/v1alpha1"
 	corev1alpha1 "github.com/openeverest/openeverest/v2/api/core/v1alpha1"
 	"github.com/openeverest/openeverest/v2/provider-runtime/controller"
@@ -58,13 +59,26 @@ func s3BackupStorage(name string, endpoint string) *backupv1alpha1.BackupStorage
 	return &backupv1alpha1.BackupStorage{
 		ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: "ns"},
 		Spec: backupv1alpha1.BackupStorageSpec{
-			Type: backupv1alpha1.BackupStorageTypeS3,
-			S3: &backupv1alpha1.BackupStorageS3Spec{
-				Bucket:               "backups",
-				Region:               "us-east-1",
-				EndpointURL:          endpoint,
-				CredentialsSecretRef: commonv1alpha1.SecretRef{Name: "creds"},
+			BackupStorageClassRef: commonv1alpha1.ObjectRef{Name: storageclasses.ClassS3},
+			Location:              backupv1alpha1.BackupStorageLocation{Bucket: "backups"},
+			Parameters: &runtime.RawExtension{
+				Raw: []byte(`{"region":"us-east-1","endpointURL":"` + endpoint + `"}`),
 			},
+			Authentication: commonv1alpha1.Authentication{
+				Mode:                 storageclasses.AuthModeAccessKey,
+				CredentialsSecretRef: &commonv1alpha1.SecretRef{Name: "creds"},
+			},
+		},
+	}
+}
+
+// s3Credentials is the credentials Secret s3BackupStorage names.
+func s3Credentials() *corev1.Secret {
+	return &corev1.Secret{
+		ObjectMeta: metav1.ObjectMeta{Name: "creds", Namespace: "ns"},
+		Data: map[string][]byte{
+			storageclasses.KeyAWSAccessKeyID:     []byte("key"),
+			storageclasses.KeyAWSSecretAccessKey: []byte("secret"),
 		},
 	}
 }
@@ -75,7 +89,7 @@ func newContextWith(t *testing.T, objs ...client.Object) *controller.Context {
 	instance := testInstance()
 	fakeClient := fake.NewClientBuilder().
 		WithScheme(scheme).
-		WithObjects(append([]client.Object{instance}, objs...)...).
+		WithObjects(append([]client.Object{instance, s3Credentials()}, objs...)...).
 		Build()
 	return controller.NewContext(context.Background(), fakeClient, instance, common.ProviderName)
 }
@@ -122,7 +136,9 @@ func TestBuildOperatorS3Storage(t *testing.T) {
 	t.Run("non-S3 storage is a config error", func(t *testing.T) {
 		bs := &backupv1alpha1.BackupStorage{
 			ObjectMeta: metav1.ObjectMeta{Name: "empty", Namespace: "ns"},
-			Spec:       backupv1alpha1.BackupStorageSpec{Type: backupv1alpha1.BackupStorageTypeS3},
+			Spec: backupv1alpha1.BackupStorageSpec{
+				BackupStorageClassRef: commonv1alpha1.ObjectRef{Name: "azure-blob"},
+			},
 		}
 		c := newContextWith(t, bs)
 
