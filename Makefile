@@ -197,6 +197,9 @@ install-crds: ## Install OpenEverest CRDs (and your operator's CRDs) into the cl
 	kubectl apply -f https://raw.githubusercontent.com/openeverest/openeverest/$(OPENEVEREST_BRANCH)/config/crd/bases/backup.openeverest.io_backups.yaml
 	kubectl apply -f https://raw.githubusercontent.com/openeverest/openeverest/$(OPENEVEREST_BRANCH)/config/crd/bases/backup.openeverest.io_restores.yaml
 	kubectl apply -f https://raw.githubusercontent.com/openeverest/openeverest/$(OPENEVEREST_BRANCH)/config/crd/bases/backup.openeverest.io_backupstorages.yaml
+	kubectl apply -f https://raw.githubusercontent.com/openeverest/openeverest/$(OPENEVEREST_BRANCH)/config/crd/bases/backup.openeverest.io_backupstorageclasses.yaml
+	kubectl wait --for condition=established --timeout=30s crd/backupstorageclasses.backup.openeverest.io
+	kubectl apply -f https://raw.githubusercontent.com/openeverest/openeverest/$(OPENEVEREST_BRANCH)/config/backupstorageclasses/s3.yaml
 	# TODO: install your operator's CRDs, e.g.:
 	# curl -fsSL https://raw.githubusercontent.com/<org>/<operator>/v$(OPERATOR_VERSION)/deploy/crd.yaml | kubectl apply --server-side -f -
 

@@ -1,5 +1,6 @@
 # The provider points the operator at its replica template, and the operator
-# scales the cluster out to 4 ready nodes.
+# scales the cluster out to 4 ready nodes. Replica clones are staged under
+# backups/<namespace>/<instance>/<instance-uid>/<storage>/replica.
 apiVersion: k8s.mariadb.com/v1alpha1
 kind: MariaDB
 metadata:
@@ -21,4 +22,5 @@ spec:
     suspend: true
   storage:
     s3:
-      prefix: test-replication-replica
+      (starts_with(prefix, join('/', ['backups', $namespace, 'test-replication', '']))): true
+      (ends_with(prefix, '/seaweedfs-s3/replica')): true
