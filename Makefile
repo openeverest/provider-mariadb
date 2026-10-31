@@ -8,7 +8,7 @@ CONTAINER_TOOL ?= docker
 
 # OpenEverest ref to use for OpenEverest CRD installation. Pinned to the release
 # tag matching the core version in go.mod.
-OPENEVEREST_BRANCH ?= v2.0.0-dev.4
+OPENEVEREST_BRANCH ?= backup/storage-runtime
 
 # Image URL to use for building/pushing image targets
 IMG ?= ghcr.io/openeverest/provider-mariadb-dev:latest
