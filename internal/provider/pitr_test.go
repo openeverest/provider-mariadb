@@ -155,12 +155,12 @@ func TestSyncPITRCreatesResources(t *testing.T) {
 	require.NoError(t, SyncPITR(c))
 
 	// PITR CR is created, owned by the Instance, referencing the base backup and
-	// archiving binary logs under the dedicated prefix.
+	// archiving binary logs in a directory of their own under the storage path.
 	pitr := &mariadbv1alpha1.PointInTimeRecovery{}
 	require.NoError(t, c.Get(pitr, pitrCRName("db")))
 	assert.Equal(t, pitrBaseBackupName("db"), pitr.Spec.PhysicalBackupRef.Name)
 	require.NotNil(t, pitr.Spec.PointInTimeRecoveryStorage.S3)
-	assert.Equal(t, "db-binlog", pitr.Spec.PointInTimeRecoveryStorage.S3.Prefix)
+	assert.Equal(t, dbStoragePath+"/binlog", pitr.Spec.PointInTimeRecoveryStorage.S3.Prefix)
 	require.Len(t, pitr.OwnerReferences, 1)
 	assert.Equal(t, "db", pitr.OwnerReferences[0].Name)
 	assert.Equal(t, "Instance", pitr.OwnerReferences[0].Kind)
@@ -172,9 +172,45 @@ func TestSyncPITRCreatesResources(t *testing.T) {
 	assert.Equal(t, "0 0 * * *", base.Spec.Schedule.Cron)
 	require.NotNil(t, base.Spec.Schedule.Immediate)
 	assert.True(t, *base.Spec.Schedule.Immediate)
+	require.NotNil(t, base.Spec.Storage.S3)
+	assert.Equal(t, dbStoragePath, base.Spec.Storage.S3.Prefix)
 	require.Len(t, base.OwnerReferences, 1)
 	assert.Equal(t, "MariaDB", base.OwnerReferences[0].Kind)
 	assert.Equal(t, "true", base.Labels[pitrBaseLabel])
+}
+
+func TestSyncPITRHoldsStorage(t *testing.T) {
+	in := pitrInstance(string(definition.TopologyTypeReplication),
+		pitrStorage("s3", true, physicalSchedule("daily")))
+
+	t.Run("keeps the live PITR resources", func(t *testing.T) {
+		live := &mariadbv1alpha1.S3{Bucket: "old", Prefix: "db-binlog"}
+		existingPITR := &mariadbv1alpha1.PointInTimeRecovery{
+			ObjectMeta: metav1.ObjectMeta{Name: pitrCRName("db"), Namespace: "ns"},
+			Spec: mariadbv1alpha1.PointInTimeRecoverySpec{
+				PointInTimeRecoveryStorage: mariadbv1alpha1.PointInTimeRecoveryStorage{S3: live},
+			},
+		}
+		c := newPITRContext(t, in.DeepCopy(), mariadbCR(), existingPITR,
+			unacceptedBackupStorage("s3", "https://minio.example.com:9000"))
+
+		require.NoError(t, SyncPITR(c))
+		pitr := &mariadbv1alpha1.PointInTimeRecovery{}
+		require.NoError(t, c.Get(pitr, pitrCRName("db")))
+		assert.Equal(t, live, pitr.Spec.PointInTimeRecoveryStorage.S3)
+		assert.True(t, controller.IsNotFound(c.Get(&mariadbv1alpha1.PhysicalBackup{}, pitrBaseBackupName("db"))))
+	})
+
+	t.Run("creates nothing for a storage the operator cannot express", func(t *testing.T) {
+		bs := s3BackupStorage("s3", "https://minio.example.com:9000")
+		bs.Spec.TLS = &commonv1alpha1.TLSConfig{InsecureSkipVerify: true}
+		c := newPITRContext(t, in.DeepCopy(), mariadbCR(), bs)
+
+		require.NoError(t, SyncPITR(c))
+		assert.True(t, controller.IsNotFound(c.Get(&mariadbv1alpha1.PointInTimeRecovery{}, pitrCRName("db"))))
+		assert.True(t, controller.IsNotFound(c.Get(&mariadbv1alpha1.PhysicalBackup{}, pitrBaseBackupName("db"))))
+		assert.Equal(t, corev1alpha1.ReasonTLSOptionUnsupported, storageReason(t, c, "s3"))
+	})
 }
 
 func TestSyncPITRWaitsForMariaDB(t *testing.T) {

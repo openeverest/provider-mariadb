@@ -55,12 +55,18 @@ func testInstance() *corev1alpha1.Instance {
 	}
 }
 
+// dbStoragePath is where the "db" Instance of testInstance writes the backups
+// of its "s3" storage entry.
+const dbStoragePath = "team/backups/ns/db/s3"
+
+// s3BackupStorage is an accepted s3 BackupStorage under the "team" prefix of
+// the "backups" bucket.
 func s3BackupStorage(name string, endpoint string) *backupv1alpha1.BackupStorage {
 	return &backupv1alpha1.BackupStorage{
-		ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: "ns"},
+		ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: "ns", Generation: 1},
 		Spec: backupv1alpha1.BackupStorageSpec{
 			BackupStorageClassRef: commonv1alpha1.ObjectRef{Name: storageclasses.ClassS3},
-			Location:              backupv1alpha1.BackupStorageLocation{Bucket: "backups"},
+			Location:              backupv1alpha1.BackupStorageLocation{Bucket: "backups", Prefix: "team"},
 			Parameters: &runtime.RawExtension{
 				Raw: []byte(`{"region":"us-east-1","endpointURL":"` + endpoint + `"}`),
 			},
@@ -69,7 +75,21 @@ func s3BackupStorage(name string, endpoint string) *backupv1alpha1.BackupStorage
 				CredentialsSecretRef: &commonv1alpha1.SecretRef{Name: "creds"},
 			},
 		},
+		Status: backupv1alpha1.BackupStorageStatus{Conditions: []metav1.Condition{{
+			Type:               backupv1alpha1.BackupStorageConditionAccepted,
+			Status:             metav1.ConditionTrue,
+			Reason:             backupv1alpha1.ReasonAccepted,
+			ObservedGeneration: 1,
+			LastTransitionTime: metav1.Now(),
+		}}},
 	}
+}
+
+// unacceptedBackupStorage is s3BackupStorage before it has been validated.
+func unacceptedBackupStorage(name string, endpoint string) *backupv1alpha1.BackupStorage {
+	bs := s3BackupStorage(name, endpoint)
+	bs.Status = backupv1alpha1.BackupStorageStatus{}
+	return bs
 }
 
 // s3Credentials is the credentials Secret s3BackupStorage names.
@@ -94,58 +114,211 @@ func newContextWith(t *testing.T, objs ...client.Object) *controller.Context {
 	return controller.NewContext(context.Background(), fakeClient, instance, common.ProviderName)
 }
 
-func TestBuildOperatorS3Storage(t *testing.T) {
-	t.Run("maps S3 storage and strips https scheme", func(t *testing.T) {
-		c := newContextWith(t, s3BackupStorage("s3", "https://minio.example.com:9000"))
-
-		got, err := buildOperatorS3Storage(c, "s3")
-		require.NoError(t, err)
-		require.NotNil(t, got.S3)
-		assert.Equal(t, "backups", got.S3.Bucket)
-		assert.Equal(t, "us-east-1", got.S3.Region)
-		assert.Equal(t, "minio.example.com:9000", got.S3.Endpoint)
-		assert.Equal(t, "db", got.S3.Prefix)
-		require.NotNil(t, got.S3.AccessKeyIdSecretKeyRef)
-		assert.Equal(t, "creds", got.S3.AccessKeyIdSecretKeyRef.Name)
-		assert.Equal(t, s3AccessKeyIDSecretKey, got.S3.AccessKeyIdSecretKeyRef.Key)
-		require.NotNil(t, got.S3.SecretAccessKeySecretKeyRef)
-		assert.Equal(t, s3SecretAccessKeySecretKey, got.S3.SecretAccessKeySecretKeyRef.Key)
-		require.NotNil(t, got.S3.TLS)
-		assert.True(t, got.S3.TLS.Enabled)
-	})
-
-	t.Run("http endpoint disables TLS", func(t *testing.T) {
-		c := newContextWith(t, s3BackupStorage("s3", "http://minio.example.com:9000"))
-
-		got, err := buildOperatorS3Storage(c, "s3")
-		require.NoError(t, err)
-		assert.Equal(t, "minio.example.com:9000", got.S3.Endpoint)
-		require.NotNil(t, got.S3.TLS)
-		assert.False(t, got.S3.TLS.Enabled)
-	})
-
-	t.Run("missing storage returns a wait error", func(t *testing.T) {
-		c := newContextWith(t)
-
-		_, err := buildOperatorS3Storage(c, "absent")
-		require.Error(t, err)
-		var waitErr *controller.WaitError
-		assert.ErrorAs(t, err, &waitErr)
-	})
-
-	t.Run("non-S3 storage is a config error", func(t *testing.T) {
-		bs := &backupv1alpha1.BackupStorage{
-			ObjectMeta: metav1.ObjectMeta{Name: "empty", Namespace: "ns"},
-			Spec: backupv1alpha1.BackupStorageSpec{
-				BackupStorageClassRef: commonv1alpha1.ObjectRef{Name: "azure-blob"},
-			},
-		}
+func TestOperatorS3(t *testing.T) {
+	t.Run("https endpoint renders host:port with TLS", func(t *testing.T) {
+		bs := s3BackupStorage("s3", "https://minio.example.com:9000")
 		c := newContextWith(t, bs)
 
-		_, err := buildOperatorS3Storage(c, "empty")
+		got, err := operatorS3(c, bs, "some/path")
+		require.NoError(t, err)
+		assert.Equal(t, "backups", got.Bucket)
+		assert.Equal(t, "us-east-1", got.Region)
+		assert.Equal(t, "minio.example.com:9000", got.Endpoint)
+		assert.Equal(t, "some/path", got.Prefix)
+		require.NotNil(t, got.AccessKeyIdSecretKeyRef)
+		assert.Equal(t, "creds", got.AccessKeyIdSecretKeyRef.Name)
+		assert.Equal(t, storageclasses.KeyAWSAccessKeyID, got.AccessKeyIdSecretKeyRef.Key)
+		require.NotNil(t, got.SecretAccessKeySecretKeyRef)
+		assert.Equal(t, "creds", got.SecretAccessKeySecretKeyRef.Name)
+		assert.Equal(t, storageclasses.KeyAWSSecretAccessKey, got.SecretAccessKeySecretKeyRef.Key)
+		require.NotNil(t, got.TLS)
+		assert.True(t, got.TLS.Enabled)
+		assert.Nil(t, got.TLS.CASecretKeyRef)
+	})
+
+	t.Run("http endpoint uses the default port without TLS", func(t *testing.T) {
+		bs := s3BackupStorage("s3", "http://seaweedfs.seaweedfs.svc.cluster.local")
+		c := newContextWith(t, bs)
+
+		got, err := operatorS3(c, bs, "some/path")
+		require.NoError(t, err)
+		assert.Equal(t, "seaweedfs.seaweedfs.svc.cluster.local:80", got.Endpoint)
+		require.NotNil(t, got.TLS)
+		assert.False(t, got.TLS.Enabled)
+	})
+
+	t.Run("custom CA is read by the operator from its Secret", func(t *testing.T) {
+		bs := s3BackupStorage("s3", "https://minio.example.com")
+		bs.Spec.TLS = &commonv1alpha1.TLSConfig{CA: &commonv1alpha1.CABundleSource{
+			SecretKeyRef: &commonv1alpha1.SecretKeyRef{Name: "s3-ca", Key: "ca.crt"},
+		}}
+		ca := &corev1.Secret{
+			ObjectMeta: metav1.ObjectMeta{Name: "s3-ca", Namespace: "ns"},
+			Data:       map[string][]byte{"ca.crt": []byte("-----BEGIN CERTIFICATE-----")},
+		}
+		c := newContextWith(t, bs, ca)
+
+		got, err := operatorS3(c, bs, "some/path")
+		require.NoError(t, err)
+		assert.Equal(t, "minio.example.com:443", got.Endpoint)
+		require.NotNil(t, got.TLS)
+		assert.True(t, got.TLS.Enabled)
+		require.NotNil(t, got.TLS.CASecretKeyRef)
+		assert.Equal(t, "s3-ca", got.TLS.CASecretKeyRef.Name)
+		assert.Equal(t, "ca.crt", got.TLS.CASecretKeyRef.Key)
+	})
+
+	t.Run("skipping certificate verification is unsupported", func(t *testing.T) {
+		bs := s3BackupStorage("s3", "https://minio.example.com")
+		bs.Spec.TLS = &commonv1alpha1.TLSConfig{InsecureSkipVerify: true}
+		c := newContextWith(t, bs)
+
+		_, err := operatorS3(c, bs, "some/path")
+		require.ErrorIs(t, err, controller.ErrTLSOptionUnsupported)
+	})
+
+	t.Run("unknown parameter is unsupported", func(t *testing.T) {
+		bs := s3BackupStorage("s3", "https://minio.example.com")
+		bs.Spec.Parameters.Raw = []byte(`{"region":"us-east-1","endpointURL":"https://minio.example.com","sse":"aws:kms"}`)
+		c := newContextWith(t, bs)
+
+		_, err := operatorS3(c, bs, "some/path")
+		require.ErrorIs(t, err, storageclasses.ErrUnsupportedParameter)
+	})
+}
+
+func instanceWithStorage(storageName string) *corev1alpha1.Instance {
+	in := testInstance()
+	in.Spec.Backup = &corev1alpha1.InstanceBackupSpec{
+		Enabled:  true,
+		ClassRef: commonv1alpha1.ObjectRef{Name: "mariadb"},
+		Storages: []corev1alpha1.InstanceBackupStorage{{StorageRef: commonv1alpha1.ObjectRef{Name: storageName}}},
+	}
+	return in
+}
+
+// storageReason returns the runtime's verdict on the Instance's storage entry
+// naming name.
+func storageReason(t *testing.T, c *controller.Context, name string) string {
+	t.Helper()
+	storages, err := c.BackupStorages()
+	require.NoError(t, err)
+	for _, s := range storages {
+		if s.Name() == name {
+			return s.Reason
+		}
+	}
+	t.Fatalf("no storage entry %q", name)
+	return ""
+}
+
+func TestBackupStorageS3(t *testing.T) {
+	t.Run("renders the entry under its path", func(t *testing.T) {
+		c := newContextForInstance(t, instanceWithStorage("s3"), s3BackupStorage("s3", "https://minio.example.com:9000"))
+
+		got, err := backupStorageS3(c, "s3")
+		require.NoError(t, err)
+		require.NotNil(t, got)
+		assert.Equal(t, "backups", got.Bucket)
+		assert.Equal(t, dbStoragePath, got.Prefix)
+		assert.Empty(t, storageReason(t, c, "s3"))
+	})
+
+	t.Run("holds an entry the runtime does not let apply", func(t *testing.T) {
+		c := newContextForInstance(t, instanceWithStorage("s3"), unacceptedBackupStorage("s3", "https://minio.example.com:9000"))
+
+		got, err := backupStorageS3(c, "s3")
+		require.NoError(t, err)
+		assert.Nil(t, got)
+		assert.Equal(t, corev1alpha1.ReasonBackupStorageNotAccepted, storageReason(t, c, "s3"))
+	})
+
+	t.Run("holds an entry whose storage is missing", func(t *testing.T) {
+		c := newContextForInstance(t, instanceWithStorage("s3"))
+
+		got, err := backupStorageS3(c, "s3")
+		require.NoError(t, err)
+		assert.Nil(t, got)
+		assert.Equal(t, corev1alpha1.ReasonBackupStorageNotFound, storageReason(t, c, "s3"))
+	})
+
+	t.Run("rejects and holds an entry the operator cannot express", func(t *testing.T) {
+		bs := s3BackupStorage("s3", "https://minio.example.com:9000")
+		bs.Spec.TLS = &commonv1alpha1.TLSConfig{InsecureSkipVerify: true}
+		c := newContextForInstance(t, instanceWithStorage("s3"), bs)
+
+		got, err := backupStorageS3(c, "s3")
+		require.NoError(t, err)
+		assert.Nil(t, got)
+		assert.Equal(t, corev1alpha1.ReasonTLSOptionUnsupported, storageReason(t, c, "s3"))
+	})
+}
+
+func TestBackupS3(t *testing.T) {
+	recorded := func() *backupv1alpha1.Backup {
+		return &backupv1alpha1.Backup{
+			ObjectMeta: metav1.ObjectMeta{Name: "backup-1", Namespace: "ns"},
+			Spec:       backupv1alpha1.BackupSpec{StorageRef: commonv1alpha1.ObjectRef{Name: "s3"}},
+			Status:     backupv1alpha1.BackupStatus{Path: "team/backups/ns/src/uid-src/s3"},
+		}
+	}
+
+	t.Run("points at the location the backup recorded", func(t *testing.T) {
+		c := newContextWith(t, s3BackupStorage("s3", "https://minio.example.com:9000"))
+
+		got, err := backupS3(c, recorded())
+		require.NoError(t, err)
+		assert.Equal(t, "team/backups/ns/src/uid-src/s3", got.Prefix)
+	})
+
+	t.Run("points an imported backup under the storage prefix", func(t *testing.T) {
+		backup := recorded()
+		backup.Status.Path = ""
+		backup.Spec.Origin = backupv1alpha1.BackupOrigin{
+			Type:     backupv1alpha1.BackupOriginTypeExternal,
+			External: &backupv1alpha1.BackupOriginExternal{Path: "old/db"},
+		}
+		c := newContextWith(t, s3BackupStorage("s3", "https://minio.example.com:9000"))
+
+		got, err := backupS3(c, backup)
+		require.NoError(t, err)
+		assert.Equal(t, "team/old/db", got.Prefix)
+	})
+
+	t.Run("waits for a missing storage", func(t *testing.T) {
+		c := newContextWith(t)
+
+		_, err := backupS3(c, recorded())
+		assert.True(t, controller.IsWaitError(err))
+	})
+
+	t.Run("a backup without a location points at its origin instance's path", func(t *testing.T) {
+		backup := recorded()
+		backup.Status.Path = ""
+		backup.Spec.Origin = backupv1alpha1.BackupOrigin{
+			Type:        backupv1alpha1.BackupOriginTypeInstance,
+			InstanceRef: &commonv1alpha1.ObjectRef{Name: "src"},
+		}
+		src := &corev1alpha1.Instance{ObjectMeta: metav1.ObjectMeta{Name: "src", Namespace: "ns", UID: "uid-src"}}
+		c := newContextWith(t, s3BackupStorage("s3", "https://minio.example.com:9000"), src)
+
+		got, err := backupS3(c, backup)
+		require.NoError(t, err)
+		assert.Equal(t, "team/backups/ns/src/uid-src/s3", got.Prefix)
+	})
+
+	t.Run("a backup without a location whose origin instance is gone is an error", func(t *testing.T) {
+		backup := recorded()
+		backup.Status.Path = ""
+		backup.Spec.Origin = backupv1alpha1.BackupOrigin{
+			Type:        backupv1alpha1.BackupOriginTypeInstance,
+			InstanceRef: &commonv1alpha1.ObjectRef{Name: "src"},
+		}
+		c := newContextWith(t, s3BackupStorage("s3", "https://minio.example.com:9000"))
+
+		_, err := backupS3(c, backup)
 		require.Error(t, err)
-		var cfgErr *controller.BackupConfigError
-		assert.ErrorAs(t, err, &cfgErr)
+		assert.False(t, controller.IsWaitError(err))
 	})
 }
 
@@ -253,6 +426,7 @@ func TestSyncBackup(t *testing.T) {
 				Raw: []byte(`{"compression":"gzip","databases":["app"],"ignoreGlobalPriv":true}`),
 			},
 		},
+		Status: backupv1alpha1.BackupStatus{Path: dbStoragePath},
 	}
 	c := newContextWith(t, mdb, s3BackupStorage("s3", "https://minio.example.com:9000"), sdkBackup)
 
@@ -270,6 +444,7 @@ func TestSyncBackup(t *testing.T) {
 	assert.True(t, opBackup.Spec.MariaDBRef.WaitForIt)
 	require.NotNil(t, opBackup.Spec.Storage.S3)
 	assert.Equal(t, "minio.example.com:9000", opBackup.Spec.Storage.S3.Endpoint)
+	assert.Equal(t, dbStoragePath, opBackup.Spec.Storage.S3.Prefix)
 	assert.Equal(t, mariadbv1alpha1.CompressAlgorithm("gzip"), opBackup.Spec.Compression)
 	assert.Equal(t, []string{"app"}, opBackup.Spec.Databases)
 	assert.Equal(t, []string{"--flush-privileges"}, opBackup.Spec.Args)

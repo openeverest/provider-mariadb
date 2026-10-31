@@ -18,6 +18,7 @@ import (
 	"crypto/sha1" //nolint:gosec // short, non-cryptographic name derivation
 	"encoding/hex"
 	"fmt"
+	"path"
 
 	mariadbv1alpha1 "github.com/mariadb-operator/mariadb-operator/v26/api/v1alpha1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
@@ -36,9 +37,9 @@ const (
 	// full base backup, so it is excluded from scheduled-run mirroring.
 	pitrBaseLabel = "backup.provider-mariadb.openeverest.io/pitr-base"
 
-	// binlogPrefixSuffix isolates archived binary logs under a dedicated prefix
-	// in the storage bucket, separate from the base backup files.
-	binlogPrefixSuffix = "-binlog"
+	// binlogPathSegment keeps archived binary logs in a directory of their own
+	// under the storage path, apart from the base backup files.
+	binlogPathSegment = "binlog"
 )
 
 // pitrCRName is the name of the PointInTimeRecovery CR managed for an Instance.
@@ -109,7 +110,8 @@ func firstPhysicalSchedule(storage *corev1alpha1.InstanceBackupStorage) (*corev1
 
 // SyncPITR reconciles point-in-time recovery for the Instance: it manages the
 // full base PhysicalBackup and the PointInTimeRecovery CR when a storage has
-// PITR enabled, and tears them down otherwise. The MariaDB.spec
+// PITR enabled, and tears them down otherwise. While the storage is held both
+// are kept as they are, and neither is created. The MariaDB.spec
 // .pointInTimeRecoveryRef overlay that actually turns on binary log archival is
 // applied in SyncMariaDB.
 func SyncPITR(c *controller.Context) error {
@@ -136,11 +138,21 @@ func SyncPITR(c *controller.Context) error {
 		return err
 	}
 
-	baseName := pitrBaseBackupName(c.Name())
-	if err := reconcilePITRBaseBackup(c, mdb, storage.StorageRef.Name, schedule, baseName); err != nil {
+	s3, err := backupStorageS3(c, storage.StorageRef.Name)
+	if err != nil {
 		return err
 	}
-	return reconcilePITR(c, storage.StorageRef.Name, baseName)
+	if s3 == nil {
+		return nil
+	}
+	binlogs := s3.DeepCopy()
+	binlogs.Prefix = path.Join(s3.Prefix, binlogPathSegment)
+
+	baseName := pitrBaseBackupName(c.Name())
+	if err := reconcilePITRBaseBackup(c, mdb, s3, schedule, baseName); err != nil {
+		return err
+	}
+	return reconcilePITR(c, binlogs, baseName)
 }
 
 // reconcilePITRBaseBackup reconciles the scheduled operator PhysicalBackup that
@@ -150,14 +162,11 @@ func SyncPITR(c *controller.Context) error {
 func reconcilePITRBaseBackup(
 	c *controller.Context,
 	mdb *mariadbv1alpha1.MariaDB,
-	storageName string,
+	s3 *mariadbv1alpha1.S3,
 	schedule *corev1alpha1.InstanceBackupSchedule,
 	name string,
 ) error {
-	storage, err := buildPhysicalS3Storage(c, storageName)
-	if err != nil {
-		return err
-	}
+	storage := mariadbv1alpha1.PhysicalBackupStorage{S3: s3}
 	retention, err := deriveMaxRetention(schedule.Cron, schedule.Retention)
 	if err != nil {
 		return &controller.BackupConfigError{Reason: "InvalidSchedule", Message: err.Error()}
@@ -198,22 +207,18 @@ func reconcilePITRBaseBackup(
 	return nil
 }
 
-// reconcilePITR reconciles the PointInTimeRecovery CR that configures binary log
-// archival to the storage and references the full base backup. Compression,
-// archiveTimeout and strictMode use the operator defaults.
+// reconcilePITR reconciles the PointInTimeRecovery CR that archives binary logs
+// to s3 and references the full base backup. Compression, archiveTimeout and
+// strictMode use the operator defaults.
 func reconcilePITR(
 	c *controller.Context,
-	storageName string,
+	s3 *mariadbv1alpha1.S3,
 	baseName string,
 ) error {
-	s3, err := buildOperatorS3(c, storageName, c.Name()+binlogPrefixSuffix)
-	if err != nil {
-		return err
-	}
 	pitr := &mariadbv1alpha1.PointInTimeRecovery{
 		ObjectMeta: metav1.ObjectMeta{Name: pitrCRName(c.Name()), Namespace: c.Namespace()},
 	}
-	_, err = controllerutil.CreateOrUpdate(c.Context(), c.Client(), pitr, func() error {
+	_, err := controllerutil.CreateOrUpdate(c.Context(), c.Client(), pitr, func() error {
 		// spec.compression is immutable; the base backup reference is set once
 		// so the timeline is not silently rebased.
 		if pitr.ResourceVersion == "" {

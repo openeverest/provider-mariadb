@@ -16,6 +16,7 @@ package provider
 
 import (
 	"fmt"
+	"path"
 	"reflect"
 
 	mariadbv1alpha1 "github.com/mariadb-operator/mariadb-operator/v26/api/v1alpha1"
@@ -28,9 +29,9 @@ import (
 	"github.com/openeverest/openeverest/v2/provider-runtime/controller"
 )
 
-// replicaPrefixSuffix keeps the replica clones apart from the Instance's
-// backups in the shared storage prefix.
-const replicaPrefixSuffix = "-replica"
+// replicaPathSegment keeps the replica clones apart from the Instance's backups
+// under the storage path.
+const replicaPathSegment = "replica"
 
 // replicaTemplateName names the PhysicalBackup the operator uses as a template
 // to clone new replicas of a replication cluster.
@@ -64,6 +65,7 @@ func desiredReplicaBootstrapFrom(c *controller.Context) *mariadbv1alpha1.Replica
 // to clone new replicas when scaling out a replication cluster. The template is
 // never run on its own (its schedule is suspended); the operator creates a
 // one-off PhysicalBackup from it, preferring a ready replica as the source.
+// While the storage is held the template is kept as it is, and not created.
 func SyncReplicaTemplate(c *controller.Context) error {
 	name := replicaTemplateName(c.Name())
 	storage := replicaTemplateStorage(c.Instance())
@@ -84,10 +86,14 @@ func SyncReplicaTemplate(c *controller.Context) error {
 		return fmt.Errorf("get MariaDB: %w", err)
 	}
 
-	s3, err := buildOperatorS3(c, storage.StorageRef.Name, c.Name()+replicaPrefixSuffix)
+	s3, err := backupStorageS3(c, storage.StorageRef.Name)
 	if err != nil {
 		return err
 	}
+	if s3 == nil {
+		return nil
+	}
+	s3.Prefix = path.Join(s3.Prefix, replicaPathSegment)
 	desiredStorage := mariadbv1alpha1.PhysicalBackupStorage{S3: s3}
 
 	// spec.storage is immutable on the operator PhysicalBackup; if it changed,
