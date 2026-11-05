@@ -1,26 +1,32 @@
 ---
 # Monitoring suite.
 #
-# Provisions a single-node MariaDB with the monitoring component enabled,
-# verifies that the provider wires spec.metrics onto the MariaDB CR (exporter
-# image, ServiceMonitor settings), waits for the instance to become Ready,
-# disables the ServiceMonitor, and tears it down.
+# Monitoring through Instance.spec.monitoring.destinations[]: an
+# ExtensionManaged prometheus binding turns the mysqld-exporter on and
+# publishes one metrics endpoint per MariaDB pod, replacing prometheus with
+# victoriametrics keeps the exporter and endpoints, and dropping the last
+# entry turns the exporter off and deletes its Deployment. No extension
+# controller runs here, so the classes are claimed by hand and the bindings are
+# never Configured; what the provider owns is asserted.
 apiVersion: chainsaw.kyverno.io/v1alpha1
 kind: Test
 metadata:
   name: monitoring
 spec:
   description: |
-    Create an Instance with monitoring enabled, verify the MariaDB CR carries
-    the expected spec.metrics block, wait for Ready, disable the ServiceMonitor
-    and verify it is deleted, then delete the Instance.
+    Bind an Instance to a class requiring metrics, verify the MariaDB CR runs
+    the exporter without a ServiceMonitor and the Instance publishes the probe
+    endpoints, switch to another such class, drop the destinations and verify
+    the exporter is torn down, then delete the Instance.
 
   # Collect diagnostics when a step fails.
   catch:
     - script:
-        content: kubectl -n $NAMESPACE get instance,mariadb,pods -o wide
+        content: kubectl -n $NAMESPACE get instance,mariadb,monitoringdestination,monitoringbinding,deploy,pods -o wide
     - script:
-        content: kubectl -n $NAMESPACE get mariadb -o yaml
+        content: kubectl -n $NAMESPACE get instance,mariadb,monitoringbinding -o yaml
+    - script:
+        content: kubectl get monitoringclass -o yaml
     - script:
         content: |
           ns=$(kubectl get deploy -A -l app.kubernetes.io/name=provider-mariadb \
@@ -41,31 +47,30 @@ spec:
               echo "provider available replicas: ${avail:-0}"
               echo "${avail}" | grep -q '[1-9]'
 
-    # The mariadb-operator requires the ServiceMonitor CRD when the
-    # ServiceMonitor is enabled. Install the Prometheus Operator CRDs if not already present.
-    - name: install-servicemonitor-crd
+    - name: setup
       try:
+        - apply:
+            file: 00-install.yaml
+        # Stand in for the extension controllers: a class is usable only once
+        # its controller has claimed it.
         - script:
             content: |
-              set -eu
-              if kubectl get crd servicemonitors.monitoring.coreos.com >/dev/null 2>&1; then
-                echo "ServiceMonitor CRD already present"
-              else
-                echo "Installing Prometheus Operator CRDs..."
-                kubectl apply --server-side -f \
-                  https://raw.githubusercontent.com/prometheus-operator/prometheus-operator/v0.75.2/jsonnet/prometheus-operator/servicemonitors-crd.json
-                echo "ServiceMonitor CRD installed"
-              fi
+              for class in prometheus-it victoriametrics-it; do
+                kubectl patch monitoringclass/$class --subresource status --type merge \
+                  -p '{"status":{"conditions":[{"type":"Accepted","status":"True","reason":"Accepted","message":"claimed by the test","lastTransitionTime":"2026-01-01T00:00:00Z"}]}}'
+              done
+        - assert:
+            file: 00-assert.yaml
 
-    - name: create-instance-with-monitoring
+    - name: create-instance-with-destination
       try:
         - apply:
             file: 10-create-instance.yaml
         - assert:
             file: 10-assert.yaml
 
-    # Provisioning a real MariaDB + exporter sidecar takes a while,
-    # so give the readiness assertion a generous timeout.
+    # Provisioning a real MariaDB and the exporter takes a while, so give the
+    # readiness assertion a generous timeout.
     - name: instance-running
       timeouts:
         assert: 8m
@@ -73,14 +78,26 @@ spec:
         - assert:
             file: 11-assert.yaml
 
-    - name: disable-servicemonitor
+    - name: switch-prometheus-to-victoriametrics
       try:
-        - patch:
-            file: 12-disable-servicemonitor.yaml
+        - apply:
+            file: 12-switch-to-victoriametrics.yaml
         - assert:
             file: 12-assert.yaml
         - error:
             file: 12-errors.yaml
+
+    - name: drop-destinations
+      timeouts:
+        assert: 2m
+        error: 2m
+      try:
+        - apply:
+            file: 20-drop-destinations.yaml
+        - assert:
+            file: 20-assert.yaml
+        - error:
+            file: 20-errors.yaml
 
     - name: delete-instance
       try:

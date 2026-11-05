@@ -1,6 +1,7 @@
-# The mariadb-operator does not delete a disabled ServiceMonitor; the provider
-# does.
-apiVersion: monitoring.coreos.com/v1
-kind: ServiceMonitor
+# The prometheus binding is gone with its entry.
+apiVersion: monitoring.openeverest.io/v1alpha1
+kind: MonitoringBinding
 metadata:
-  name: test-instance-monitoring-metrics
+  labels:
+    core.openeverest.io/instance: test-instance-monitoring
+    monitoring.openeverest.io/entry: prometheus

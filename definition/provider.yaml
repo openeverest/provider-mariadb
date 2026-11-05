@@ -15,9 +15,6 @@ components:
   engine:
     type: mariadb
     parametersSchema: MariadbParameters
-  monitoring:
-    type: mysqld-exporter
-    parametersSchema: MonitoringParameters
   proxy:
     type: maxscale
     parametersSchema: MaxScaleParameters

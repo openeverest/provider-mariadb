@@ -1,0 +1,13 @@
+# The mariadb-operator leaves the exporter running once spec.metrics is gone;
+# the provider deletes it.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: test-instance-monitoring-metrics
+---
+# No binding survives its Instance entry.
+apiVersion: monitoring.openeverest.io/v1alpha1
+kind: MonitoringBinding
+metadata:
+  labels:
+    core.openeverest.io/instance: test-instance-monitoring

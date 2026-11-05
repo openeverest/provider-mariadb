@@ -34,7 +34,7 @@ Source of truth: `internal/provider/`, `definition/`, [README](README.md#capabil
 | Scheduling | ✅ | affinity (no `podAffinity`), nodeSelector, tolerations, topology spread |
 | TLS | ✅ | on by default, opt-in `required`, Galera SST TLS, CA in connection Secret; cert-manager open ([#39]) |
 | Exposure | ✅ | ClusterIP / LoadBalancer / NodePort on the primary (HA) or general Service; read Service open ([#105]) |
-| Monitoring | ✅ | `monitoring` component → mysqld-exporter + ServiceMonitor and/or VMServiceScrape; discovery label ([#92]), alerts ([#103]) open |
+| Monitoring | ✅ | `spec.monitoring.destinations` → mysqld-exporter on demand, one `/probe` endpoint per pod in `status.monitoring.sources`; scrape objects come from the class extensions; alerts ([#103]) open |
 | Logical backups (on demand + scheduled) | ✅ | `mariadb` BackupClass, `type: logical`, S3 only |
 | Physical backups (on demand + scheduled) | ✅ | `type: physical` (`mariadb-backup`), S3 only |
 | Restore — logical in place | ✅ | `SyncRestore` → operator `Restore` |

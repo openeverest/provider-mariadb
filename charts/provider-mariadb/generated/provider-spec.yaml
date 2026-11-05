@@ -41,36 +41,6 @@ spec:
               type: object
           type: object
       type: mariadb
-    monitoring:
-      parametersSchema:
-        openAPIV3Schema:
-          properties:
-            enabled:
-              type: boolean
-            serviceMonitor:
-              properties:
-                enabled:
-                  type: boolean
-                interval:
-                  type: string
-                jobLabel:
-                  type: string
-                prometheusRelease:
-                  type: string
-                scrapeTimeout:
-                  type: string
-              type: object
-            victoriaMetrics:
-              properties:
-                enabled:
-                  type: boolean
-                interval:
-                  type: string
-                scrapeTimeout:
-                  type: string
-              type: object
-          type: object
-      type: mysqld-exporter
     proxy:
       parametersSchema:
         openAPIV3Schema:
@@ -80,6 +50,11 @@ spec:
           type: object
       type: maxscale
   defaultVersion: "12.3"
+  monitoring:
+    componentTypes:
+      mariadb:
+        kind: mariadb
+        metrics: Exporter
   release:
     version: 0.1.0
   topologies:
@@ -99,12 +74,6 @@ spec:
                     topologySpreadConstraints: {}
                 service: {}
                 storage: {}
-        monitoring:
-          optional: true
-          supportedFields:
-            openAPIV3Schema:
-              properties:
-                resources: {}
         proxy:
           optional: true
           supportedFields:
@@ -138,12 +107,6 @@ spec:
                     topologySpreadConstraints: {}
                 service: {}
                 storage: {}
-        monitoring:
-          optional: true
-          supportedFields:
-            openAPIV3Schema:
-              properties:
-                resources: {}
         proxy:
           optional: true
           supportedFields:
@@ -177,12 +140,6 @@ spec:
                     topologySpreadConstraints: {}
                 service: {}
                 storage: {}
-        monitoring:
-          optional: true
-          supportedFields:
-            openAPIV3Schema:
-              properties:
-                resources: {}
   uiSchema:
     galera:
       sections:
@@ -217,7 +174,7 @@ spec:
                 policy:
                   uiType: widget
                   widgetType: podSchedulingPolicy
-              groupType: toggleable
+              groupType: bordered
               label: Pod scheduling policy
               uiType: group
             storageClass:
@@ -258,27 +215,6 @@ spec:
                 required: true
           description: Select the MariaDB version to deploy.
           label: Database Version
-        monitoring:
-          components:
-            enabled:
-              fieldParams:
-                defaultValue: false
-                helperText: Deploys the metrics exporter and a Prometheus ServiceMonitor. The ServiceMonitor requires the Prometheus Operator CRDs.
-                label: Enable metrics
-              path: spec.components.monitoring.parameters.enabled
-              uiType: toggle
-            victoriaMetrics:
-              fieldParams:
-                defaultValue: false
-                helperText: Creates a VMServiceScrape for the VictoriaMetrics operator instead of the ServiceMonitor. Requires metrics to be enabled.
-                label: VictoriaMetrics
-              path: spec.components.monitoring.parameters.victoriaMetrics.enabled
-              uiType: toggle
-          componentsOrder:
-            - enabled
-            - victoriaMetrics
-          description: Expose database metrics and integrate them with a Prometheus or VictoriaMetrics stack.
-          label: Monitoring
         proxy:
           components:
             enabled:
@@ -426,7 +362,6 @@ spec:
       sectionsOrder:
         - databaseVersion
         - resources
-        - monitoring
         - proxy
         - security
         - advanced
@@ -463,7 +398,7 @@ spec:
                 policy:
                   uiType: widget
                   widgetType: podSchedulingPolicy
-              groupType: toggleable
+              groupType: bordered
               label: Pod scheduling policy
               uiType: group
             storageClass:
@@ -504,27 +439,6 @@ spec:
                 required: true
           description: Select the MariaDB version to deploy.
           label: Database Version
-        monitoring:
-          components:
-            enabled:
-              fieldParams:
-                defaultValue: false
-                helperText: Deploys the metrics exporter and a Prometheus ServiceMonitor. The ServiceMonitor requires the Prometheus Operator CRDs.
-                label: Enable metrics
-              path: spec.components.monitoring.parameters.enabled
-              uiType: toggle
-            victoriaMetrics:
-              fieldParams:
-                defaultValue: false
-                helperText: Creates a VMServiceScrape for the VictoriaMetrics operator instead of the ServiceMonitor. Requires metrics to be enabled.
-                label: VictoriaMetrics
-              path: spec.components.monitoring.parameters.victoriaMetrics.enabled
-              uiType: toggle
-          componentsOrder:
-            - enabled
-            - victoriaMetrics
-          description: Expose database metrics and integrate them with a Prometheus or VictoriaMetrics stack.
-          label: Monitoring
         proxy:
           components:
             enabled:
@@ -661,7 +575,6 @@ spec:
       sectionsOrder:
         - databaseVersion
         - resources
-        - monitoring
         - proxy
         - security
         - advanced
@@ -698,7 +611,7 @@ spec:
                 policy:
                   uiType: widget
                   widgetType: podSchedulingPolicy
-              groupType: toggleable
+              groupType: bordered
               label: Pod scheduling policy
               uiType: group
             storageClass:
@@ -739,27 +652,6 @@ spec:
                 required: true
           description: Select the MariaDB version to deploy.
           label: Database Version
-        monitoring:
-          components:
-            enabled:
-              fieldParams:
-                defaultValue: false
-                helperText: Deploys the metrics exporter and a Prometheus ServiceMonitor. The ServiceMonitor requires the Prometheus Operator CRDs.
-                label: Enable metrics
-              path: spec.components.monitoring.parameters.enabled
-              uiType: toggle
-            victoriaMetrics:
-              fieldParams:
-                defaultValue: false
-                helperText: Creates a VMServiceScrape for the VictoriaMetrics operator instead of the ServiceMonitor. Requires metrics to be enabled.
-                label: VictoriaMetrics
-              path: spec.components.monitoring.parameters.victoriaMetrics.enabled
-              uiType: toggle
-          componentsOrder:
-            - enabled
-            - victoriaMetrics
-          description: Expose database metrics and integrate them with a Prometheus or VictoriaMetrics stack.
-          label: Monitoring
         resources:
           components:
             nodes:
@@ -861,27 +753,22 @@ spec:
       sectionsOrder:
         - databaseVersion
         - resources
-        - monitoring
         - security
         - advanced
   versions:
     - components:
         engine: "10.11"
-        monitoring: 0.15.1
         proxy: 23.08.13
       name: "10.11"
     - components:
         engine: "11.4"
-        monitoring: 0.15.1
         proxy: 23.08.13
       name: "11.4"
     - components:
         engine: "11.8"
-        monitoring: 0.15.1
         proxy: 23.08.13
       name: "11.8"
     - components:
         engine: "12.3"
-        monitoring: 0.15.1
         proxy: 23.08.13
       name: "12.3"

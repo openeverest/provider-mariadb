@@ -1,0 +1,19 @@
+# Nothing requires metrics any more: the provider stops declaring
+# spec.metrics. Fields the operator defaulted under it stay, but the exporter
+# is off, and the Instance reports no destinations.
+apiVersion: k8s.mariadb.com/v1alpha1
+kind: MariaDB
+metadata:
+  name: test-instance-monitoring
+spec:
+  (metrics.enabled != `true`): true
+---
+apiVersion: core.openeverest.io/v1alpha1
+kind: Instance
+metadata:
+  name: test-instance-monitoring
+spec:
+  (monitoring == null): true
+status:
+  phase: Ready
+  (monitoring == null || monitoring.destinations == null): true

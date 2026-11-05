@@ -66,7 +66,7 @@ provider itself is covered under [Installation](#installation).
 | High availability (replication) | ✅ | `spec.topology.type: replication` — async primary/replica cluster; at least 2 nodes (default 3). With a backup storage in `spec.backup`, replicas that break are rebuilt automatically |
 | Proxy / load balancing (MaxScale) | ✅ | opt-in via the `proxy` component on `galera` and `replication`; see [MaxScale proxy](#maxscale-proxy) |
 | Custom configuration | ✅ | `my.cnf` via the engine component's `configuration` parameter |
-| Monitoring | ✅ | opt-in via the `monitoring` component; deploys `mysqld-exporter` and a Prometheus `ServiceMonitor` — requires the `ServiceMonitor` CRD (`monitoring.coreos.com`) unless `serviceMonitor.enabled: false`. `victoriaMetrics.enabled` creates a `VMServiceScrape` instead — requires the `VMServiceScrape` CRD (`operator.victoriametrics.com`); the `ServiceMonitor` stays off unless `serviceMonitor.enabled` is set |
+| Monitoring | ✅ | any metrics backend through `mysqld-exporter`, via `spec.monitoring.destinations` — see [Monitoring](#monitoring) |
 | Pod scheduling | ✅ | `spec.components.{engine,proxy}.schedulingPolicy` — `affinity` (`nodeAffinity` and `podAntiAffinity`; `podAffinity` is rejected), `nodeSelector`, `tolerations` and `topologySpreadConstraints`; `schedulerName` is not supported. A set `affinity` replaces the HA default soft anti-affinity, `{}` sets none |
 | TLS | ✅ | enabled by default with operator-managed certificates; CA is published in the connection Secret |
 
@@ -166,6 +166,51 @@ spec:
 TLS can be explicitly disabled with `tls.enabled: false`. Galera deployments
 also encrypt state snapshot transfers by default; this can be changed with
 `tls.galeraSSTEnabled`. See [examples/instance-tls.yaml](examples/instance-tls.yaml).
+
+## Monitoring
+
+Monitoring is configured through `MonitoringDestination`s: each entry of
+`spec.monitoring.destinations` sends the instance's monitoring data to one
+destination.
+
+```yaml
+spec:
+  monitoring:
+    destinations:
+      - name: prometheus
+        destinationRef:
+          name: prometheus
+```
+
+The provider declares its monitoring contract in
+[definition/monitoring.yaml](definition/monitoring.yaml): a `mysqld-exporter`
+metrics endpoint for the `mariadb` component type (kind `mariadb`). It renders
+no operator-native integration such as PMM.
+
+- **Metrics backends** (for example the `prometheus` and `victoriametrics`
+  classes) turn on the operator's `mysqld-exporter` (`spec.metrics`) while one
+  of the instance's destinations requires metrics. The exporter runs as a
+  separate Deployment (`<name>-metrics`), so the MariaDB pods are not
+  restarted, and logs in as a metrics user the operator creates. Its image is
+  pinned by the `mysqld-exporter` component type in
+  [definition/versions.yaml](definition/versions.yaml).
+- While the exporter runs, the provider publishes one endpoint per MariaDB pod
+  in `status.monitoring.sources`: the exporter's `/probe` on the
+  `metrics` port with the pod as `target`, which the class's extension turns
+  into the `instance` label when it creates the scrape resources. The
+  operator's own `ServiceMonitor` stays off.
+- Once no destination requires metrics, the provider deletes the exporter
+  Deployment, which the operator leaves behind.
+
+`kubectl get monitoringbindings` lists one binding per destination entry, and
+the instance's `MonitoringConfigured` condition reports whether every entry is
+configured. See [examples/instance-monitoring.yaml](examples/instance-monitoring.yaml).
+
+> [!NOTE]
+> Up to `0.2.x`, metrics were configured through a `monitoring` component. That
+> component is gone: move to `spec.monitoring.destinations`. The provider
+> deletes the `ServiceMonitor` and `VMServiceScrape` the earlier versions
+> created.
 
 ## MaxScale proxy
 
