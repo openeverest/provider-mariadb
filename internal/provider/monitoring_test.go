@@ -16,489 +16,349 @@ package provider
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
-	"strings"
+	"os"
 	"testing"
 
 	mariadbv1alpha1 "github.com/mariadb-operator/mariadb-operator/v26/api/v1alpha1"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/api/meta"
-	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/apimachinery/pkg/runtime/schema"
+	"k8s.io/apimachinery/pkg/util/intstr"
 	"k8s.io/utils/ptr"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
+	"sigs.k8s.io/yaml"
 
+	commonv1alpha1 "github.com/openeverest/openeverest/v2/api/common/v1alpha1"
 	corev1alpha1 "github.com/openeverest/openeverest/v2/api/core/v1alpha1"
+	monitoringv1alpha1 "github.com/openeverest/openeverest/v2/api/monitoring/v1alpha1"
 	"github.com/openeverest/openeverest/v2/provider-runtime/controller"
 
-	"github.com/openeverest/provider-mariadb/definition/components"
 	"github.com/openeverest/provider-mariadb/internal/common"
 )
 
-// newMonitoringContext builds a controller.Context for an Instance whose
-// monitoring component carries the given parameters and image override. A nil
-// params map means the monitoring component is omitted entirely.
-func newMonitoringContext(t *testing.T, params *components.MonitoringParameters, image string) *controller.Context {
+const providerSpecPath = "../../charts/provider-mariadb/generated/provider-spec.yaml"
+
+// generatedProvider is the Provider CR the chart installs, so tests see the
+// monitoring contract and exporter image of definition/.
+func generatedProvider(t *testing.T) *corev1alpha1.Provider {
 	t.Helper()
-
-	scheme := runtime.NewScheme()
-	if err := corev1alpha1.AddToScheme(scheme); err != nil {
-		t.Fatalf("add core scheme: %v", err)
+	raw, err := os.ReadFile(providerSpecPath)
+	require.NoError(t, err)
+	var doc struct {
+		Spec corev1alpha1.ProviderSpec `json:"spec"`
 	}
-
-	instance := &corev1alpha1.Instance{
-		ObjectMeta: metav1.ObjectMeta{
-			Name:      "test",
-			Namespace: "default",
-		},
-		Spec: corev1alpha1.InstanceSpec{
-			Components: map[string]corev1alpha1.ComponentSpec{},
-		},
-	}
-
-	if params != nil {
-		raw, err := json.Marshal(params)
-		if err != nil {
-			t.Fatalf("marshal params: %v", err)
-		}
-		instance.Spec.Components[common.ComponentMonitoring] = corev1alpha1.ComponentSpec{
-			Type:       common.ComponentMonitoring,
-			Image:      image,
-			Parameters: &runtime.RawExtension{Raw: raw},
-		}
-	}
-
-	c := fake.NewClientBuilder().WithScheme(scheme).WithObjects(instance).Build()
-	return controller.NewContext(context.Background(), c, instance, common.ProviderName)
+	require.NoError(t, yaml.Unmarshal(raw, &doc))
+	return &corev1alpha1.Provider{ObjectMeta: metav1.ObjectMeta{Name: common.ProviderName}, Spec: doc.Spec}
 }
 
-func TestBuildMetrics_MonitoringAbsent(t *testing.T) {
-	ctx := newMonitoringContext(t, nil, "")
-
-	metrics, err := buildMetrics(ctx)
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	if metrics != nil {
-		t.Fatalf("expected nil metrics when monitoring absent, got %+v", metrics)
-	}
-}
-
-func TestBuildMetrics_Disabled(t *testing.T) {
-	ctx := newMonitoringContext(t, &components.MonitoringParameters{Enabled: false}, "exporter:latest")
-
-	metrics, err := buildMetrics(ctx)
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	if metrics != nil {
-		t.Fatalf("expected nil metrics when disabled, got %+v", metrics)
-	}
-}
-
-func TestBuildMetrics_EnabledWithImageOverride(t *testing.T) {
-	params := &components.MonitoringParameters{
-		Enabled: true,
-		ServiceMonitor: components.ServiceMonitorParameters{
-			PrometheusRelease: "kube-prometheus-stack",
-			JobLabel:          "app.kubernetes.io/instance",
-			Interval:          "30s",
-			ScrapeTimeout:     "10s",
-		},
-	}
-	ctx := newMonitoringContext(t, params, "custom/mysqld-exporter:v1")
-
-	metrics, err := buildMetrics(ctx)
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	if metrics == nil {
-		t.Fatal("expected metrics, got nil")
-	}
-	if !metrics.Enabled {
-		t.Error("expected metrics.Enabled to be true")
-	}
-	if metrics.Exporter.Image != "custom/mysqld-exporter:v1" {
-		t.Errorf("expected exporter image override, got %q", metrics.Exporter.Image)
-	}
-	if metrics.ServiceMonitor.PrometheusRelease != "kube-prometheus-stack" {
-		t.Errorf("unexpected prometheusRelease: %q", metrics.ServiceMonitor.PrometheusRelease)
-	}
-	if metrics.ServiceMonitor.JobLabel != "app.kubernetes.io/instance" {
-		t.Errorf("unexpected jobLabel: %q", metrics.ServiceMonitor.JobLabel)
-	}
-	if metrics.ServiceMonitor.Interval != "30s" {
-		t.Errorf("unexpected interval: %q", metrics.ServiceMonitor.Interval)
-	}
-	if metrics.ServiceMonitor.ScrapeTimeout != "10s" {
-		t.Errorf("unexpected scrapeTimeout: %q", metrics.ServiceMonitor.ScrapeTimeout)
-	}
-	if !ptr.Deref(metrics.ServiceMonitor.Enabled, false) {
-		t.Error("expected the ServiceMonitor to be enabled by default")
-	}
-}
-
-func TestBuildMetrics_ExporterResources(t *testing.T) {
-	params := &components.MonitoringParameters{Enabled: true}
-	ctx := newMonitoringContext(t, params, "exporter:latest")
-
-	// Attach resources to the monitoring component.
-	monitoring := ctx.Instance().Spec.Components[common.ComponentMonitoring]
-	monitoring.Resources = &corev1.ResourceRequirements{
-		Requests: corev1.ResourceList{
-			corev1.ResourceCPU: resource.MustParse("100m"),
-		},
-	}
-	ctx.Instance().Spec.Components[common.ComponentMonitoring] = monitoring
-
-	metrics, err := buildMetrics(ctx)
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	if metrics == nil || metrics.Exporter.Resources == nil {
-		t.Fatal("expected exporter resources to be set")
-	}
-	if got := metrics.Exporter.Resources.Requests.Cpu().String(); got != "100m" {
-		t.Errorf("unexpected cpu request: %q", got)
-	}
-}
-
-// The OpenEverest UI writes select values as strings, so `enabled` can arrive as
-// the quoted string "true" rather than a JSON bool. FlexBool must decode it.
-func TestBuildMetrics_EnabledAsString(t *testing.T) {
-	scheme := runtime.NewScheme()
-	if err := corev1alpha1.AddToScheme(scheme); err != nil {
-		t.Fatalf("add core scheme: %v", err)
-	}
-
-	instance := &corev1alpha1.Instance{
-		ObjectMeta: metav1.ObjectMeta{Name: "test", Namespace: "default"},
-		Spec: corev1alpha1.InstanceSpec{
-			Components: map[string]corev1alpha1.ComponentSpec{
-				common.ComponentMonitoring: {
-					Type:       common.ComponentMonitoring,
-					Image:      "exporter:latest",
-					Parameters: &runtime.RawExtension{Raw: []byte(`{"enabled":"true"}`)},
-				},
-			},
-		},
-	}
-
-	c := fake.NewClientBuilder().WithScheme(scheme).WithObjects(instance).Build()
-	ctx := controller.NewContext(context.Background(), c, instance, common.ProviderName)
-
-	metrics, err := buildMetrics(ctx)
-	if err != nil {
-		t.Fatalf("unexpected error decoding string-valued enabled: %v", err)
-	}
-	if metrics == nil || !metrics.Enabled {
-		t.Fatal("expected metrics enabled when enabled is the string \"true\"")
-	}
-}
-
-
-// newVictoriaMetricsContext builds a controller.Context for an Instance with
-// the given monitoring parameters and a fake client whose REST mapper serves
-// the VMServiceScrape and ServiceMonitor CRDs when crdInstalled is set.
-func newVictoriaMetricsContext(t *testing.T, params string, crdInstalled bool, objs ...client.Object) *controller.Context {
+func monitoringTestScheme(t *testing.T) *runtime.Scheme {
 	t.Helper()
 	scheme := runtime.NewScheme()
+	require.NoError(t, corev1.AddToScheme(scheme))
+	require.NoError(t, appsv1.AddToScheme(scheme))
 	require.NoError(t, corev1alpha1.AddToScheme(scheme))
+	require.NoError(t, monitoringv1alpha1.AddToScheme(scheme))
 	require.NoError(t, mariadbv1alpha1.AddToScheme(scheme))
+	return scheme
+}
 
+// monitoringContext builds a context for the Instance "test" whose
+// spec.monitoring lists entries; objs are the bindings, classes and live
+// objects that make them resolvable. The REST mapper serves the ServiceMonitor
+// and VMServiceScrape CRDs only when crds is set.
+func monitoringContext(t *testing.T, entries []corev1alpha1.InstanceMonitoringDestination, crds bool, objs ...client.Object) *controller.Context {
+	t.Helper()
+	scheme := monitoringTestScheme(t)
 	mapper := meta.NewDefaultRESTMapper(nil)
 	for gvk := range scheme.AllKnownTypes() {
 		mapper.Add(gvk, meta.RESTScopeNamespace)
 	}
-	if crdInstalled {
-		mapper.Add(vmServiceScrapeGVK, meta.RESTScopeNamespace)
+	if crds {
 		mapper.Add(serviceMonitorGVK, meta.RESTScopeNamespace)
+		mapper.Add(vmServiceScrapeGVK, meta.RESTScopeNamespace)
 	}
 
-	instance := &corev1alpha1.Instance{
+	in := &corev1alpha1.Instance{
 		ObjectMeta: metav1.ObjectMeta{Name: "test", Namespace: "default", UID: "uid"},
-		Spec: corev1alpha1.InstanceSpec{
-			Components: map[string]corev1alpha1.ComponentSpec{
-				common.ComponentMonitoring: {
-					Type:       common.ComponentMonitoring,
-					Image:      "exporter:test",
-					Parameters: &runtime.RawExtension{Raw: []byte(params)},
-				},
-			},
-		},
+		Spec: corev1alpha1.InstanceSpec{Components: map[string]corev1alpha1.ComponentSpec{
+			common.ComponentEngine: {Type: common.ComponentTypeMariaDB},
+		}},
+	}
+	if entries != nil {
+		in.Spec.Monitoring = &corev1alpha1.InstanceMonitoringSpec{Destinations: entries}
 	}
 	cl := fake.NewClientBuilder().
 		WithScheme(scheme).
 		WithRESTMapper(mapper).
-		WithObjects(append([]client.Object{instance}, objs...)...).
+		WithObjects(append(objs, in, generatedProvider(t))...).
 		Build()
-	return controller.NewContext(context.Background(), cl, instance, common.ProviderName)
+	return controller.NewContext(context.Background(), cl, in, common.ProviderName)
 }
 
-// metricsMariaDB returns a 3-replica MariaDB with metrics enabled whose
-// primary is the Pod with the given index.
-func metricsMariaDB(primary int) *mariadbv1alpha1.MariaDB {
-	return &mariadbv1alpha1.MariaDB{
-		ObjectMeta: metav1.ObjectMeta{Name: "test", Namespace: "default"},
-		Spec: mariadbv1alpha1.MariaDBSpec{
-			Replicas: 3,
-			Port:     3306,
-			Metrics: &mariadbv1alpha1.MariadbMetrics{
-				Enabled:        true,
-				ServiceMonitor: mariadbv1alpha1.ServiceMonitor{Interval: "10s"},
+func entry(name, destination string) corev1alpha1.InstanceMonitoringDestination {
+	return corev1alpha1.InstanceMonitoringDestination{
+		Name:           name,
+		DestinationRef: commonv1alpha1.MonitoringDestinationRef{Name: destination},
+	}
+}
+
+// acceptedBinding is what core materialises for an entry of the Instance
+// "test" once it has resolved destination, class and mode.
+func acceptedBinding(entryName, destination, class string, mode corev1alpha1.MonitoringExecutionMode) *monitoringv1alpha1.MonitoringBinding {
+	return &monitoringv1alpha1.MonitoringBinding{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:       "test-" + entryName,
+			Namespace:  "default",
+			Generation: 1,
+			Labels: map[string]string{
+				monitoringv1alpha1.BindingInstanceLabel: "test",
+				monitoringv1alpha1.BindingEntryLabel:    entryName,
+			},
+			OwnerReferences: []metav1.OwnerReference{{
+				APIVersion: corev1alpha1.GroupVersion.String(),
+				Kind:       "Instance",
+				Name:       "test",
+				UID:        "uid",
+				Controller: ptr.To(true),
+			}},
+		},
+		Spec: monitoringv1alpha1.MonitoringBindingSpec{
+			InstanceRef:    commonv1alpha1.ObjectRef{Name: "test"},
+			DestinationRef: commonv1alpha1.MonitoringDestinationRef{Name: destination},
+			ClassRef:       &commonv1alpha1.ObjectRef{Name: class},
+			ExecutionMode:  mode,
+		},
+		Status: monitoringv1alpha1.MonitoringBindingStatus{Conditions: []metav1.Condition{{
+			Type: monitoringv1alpha1.MonitoringBindingConditionAccepted, Status: metav1.ConditionTrue,
+			Reason: monitoringv1alpha1.ReasonAccepted, ObservedGeneration: 1,
+		}}},
+	}
+}
+
+// metricsClass is an ExtensionManaged class, such as monitoring-prometheus,
+// that scrapes the published endpoints when requiresMetrics is set.
+func metricsClass(name string, requiresMetrics bool) *monitoringv1alpha1.MonitoringClass {
+	return &monitoringv1alpha1.MonitoringClass{
+		ObjectMeta: metav1.ObjectMeta{Name: name},
+		Spec: monitoringv1alpha1.MonitoringClassSpec{
+			AuthModes: []commonv1alpha1.AuthMode{{Name: commonv1alpha1.AuthModeAnonymous}},
+			ExtensionManaged: &monitoringv1alpha1.ExtensionManagedFulfilment{
+				Requires: monitoringv1alpha1.SourceRequirements{Metrics: requiresMetrics},
 			},
 		},
-		Status: mariadbv1alpha1.MariaDBStatus{CurrentPrimaryPodIndex: ptr.To(primary)},
 	}
 }
 
-func getVMServiceScrape(t *testing.T, c *controller.Context) *unstructured.Unstructured {
-	t.Helper()
-	vmss := newVMServiceScrape()
-	require.NoError(t, c.Get(vmss, "test-metrics"))
-	return vmss
-}
-
-func TestDesiredVMServiceScrape(t *testing.T) {
-	c := newVictoriaMetricsContext(t, `{"enabled":true,"victoriaMetrics":{"enabled":true}}`, true)
-	vmss, err := desiredVMServiceScrape(c, metricsMariaDB(1), components.VictoriaMetricsParameters{Interval: "30s"})
-	require.NoError(t, err)
-
-	assert.Equal(t, "test-metrics", vmss.GetName())
-	assert.Equal(t, "enabled", vmss.GetAnnotations()[vmIgnorePrometheusUpdatesAnnotation])
-	assert.Equal(t, "everest", vmss.GetLabels()["app.kubernetes.io/managed-by"])
-
-	matchLabels, _, _ := unstructured.NestedStringMap(vmss.Object, "spec", "selector", "matchLabels")
-	assert.Equal(t, map[string]string{
-		"app.kubernetes.io/name":     "exporter",
-		"app.kubernetes.io/instance": "test-metrics",
-	}, matchLabels)
-	namespaces, _, _ := unstructured.NestedStringSlice(vmss.Object, "spec", "namespaceSelector", "matchNames")
-	assert.Equal(t, []string{"default"}, namespaces)
-
-	endpoints, _, _ := unstructured.NestedSlice(vmss.Object, "spec", "endpoints")
-	require.Len(t, endpoints, 3)
-	for i, raw := range endpoints {
-		endpoint := raw.(map[string]any)
-		assert.Equal(t, "metrics", endpoint["port"])
-		assert.Equal(t, "/probe", endpoint["path"])
-		assert.Equal(t, "30s", endpoint["interval"], "the VictoriaMetrics interval overrides the ServiceMonitor one")
-		assert.NotContains(t, endpoint, "scrapeTimeout")
-		target := fmt.Sprintf("test-%d.test-internal.default.svc.cluster.local:3306", i)
-		assert.Equal(t, map[string]any{"target": []any{target}}, endpoint["params"])
-
-		role := "replica"
-		if i == 1 {
-			role = "primary"
+// metricsMonitoring binds the Instance "test" to a class that requires
+// metrics: the spec.monitoring to set and the objects core materialises.
+func metricsMonitoring() (*corev1alpha1.InstanceMonitoringSpec, []client.Object) {
+	return &corev1alpha1.InstanceMonitoringSpec{Destinations: []corev1alpha1.InstanceMonitoringDestination{entry("prom", "prom")}},
+		[]client.Object{
+			acceptedBinding("prom", "prom", "prometheus", corev1alpha1.MonitoringExecutionModeExtensionManaged),
+			metricsClass("prometheus", true),
 		}
-		assert.Equal(t, []any{map[string]any{
-			"action": "replace", "replacement": role, "targetLabel": "role",
-		}}, endpoint["relabelConfigs"])
-		metricRelabels := endpoint["metricRelabelConfigs"].([]any)
-		require.Len(t, metricRelabels, 2)
-		assert.Equal(t, map[string]any{
-			"action": "replace", "replacement": strings.Split(target, ":")[0],
-			"sourceLabels": []any{"instance"}, "targetLabel": "instance",
-		}, metricRelabels[0])
+}
+
+// liveMetricsMariaDB is the MariaDB as the operator sees it, running the
+// exporter when metrics is set.
+func liveMetricsMariaDB(metrics bool) *mariadbv1alpha1.MariaDB {
+	mdb := &mariadbv1alpha1.MariaDB{
+		ObjectMeta: metav1.ObjectMeta{Name: "test", Namespace: "default", UID: "mdb-uid"},
+		Spec:       mariadbv1alpha1.MariaDBSpec{Replicas: 3, Port: 3306},
 	}
-}
-
-func TestSyncVMServiceScrape_CreatesAndTearsDown(t *testing.T) {
-	c := newVictoriaMetricsContext(t, `{"enabled":true,"victoriaMetrics":{"enabled":"true"}}`, true, metricsMariaDB(0))
-	require.NoError(t, SyncVMServiceScrape(c))
-
-	vmss := getVMServiceScrape(t, c)
-	assert.True(t, metav1.IsControlledBy(vmss, c.Instance()))
-	endpoints, _, _ := unstructured.NestedSlice(vmss.Object, "spec", "endpoints")
-	assert.Len(t, endpoints, 3)
-	assert.Equal(t, "10s", endpoints[0].(map[string]any)["interval"], "defaults to the ServiceMonitor interval")
-
-	c.Instance().Spec.Components[common.ComponentMonitoring] = corev1alpha1.ComponentSpec{
-		Type:       common.ComponentMonitoring,
-		Parameters: &runtime.RawExtension{Raw: []byte(`{"enabled":true}`)},
+	if metrics {
+		mdb.Spec.Metrics = &mariadbv1alpha1.MariadbMetrics{
+			Enabled:        true,
+			ServiceMonitor: mariadbv1alpha1.ServiceMonitor{Enabled: ptr.To(false)},
+		}
 	}
-	require.NoError(t, SyncVMServiceScrape(c))
-	err := c.Get(newVMServiceScrape(), "test-metrics")
-	assert.True(t, apierrors.IsNotFound(err), "expected VMServiceScrape to be deleted, got %v", err)
+	return mdb
 }
 
-// A VMServiceScrape converted from the operator's ServiceMonitor is taken over,
-// including when the converter made the ServiceMonitor its controller.
-func TestSyncVMServiceScrape_AdoptsConverted(t *testing.T) {
-	converted := newVMServiceScrape()
-	converted.SetName("test-metrics")
-	converted.SetNamespace("default")
-	converted.SetLabels(map[string]string{"release": "kube-prometheus-stack"})
-	converted.SetOwnerReferences([]metav1.OwnerReference{{
-		APIVersion: "monitoring.coreos.com/v1", Kind: "ServiceMonitor", Name: "test-metrics",
-		UID: "sm-uid", Controller: ptr.To(true),
-	}})
-	converted.Object["spec"] = map[string]any{"endpoints": []any{map[string]any{"port": "metrics"}}}
-
-	c := newVictoriaMetricsContext(t, `{"enabled":true,"victoriaMetrics":{"enabled":true}}`, true, metricsMariaDB(0), converted)
-	require.NoError(t, SyncVMServiceScrape(c))
-
-	vmss := getVMServiceScrape(t, c)
-	assert.True(t, metav1.IsControlledBy(vmss, c.Instance()))
-	require.Len(t, vmss.GetOwnerReferences(), 1, "the converter's controller reference is dropped")
-	assert.Equal(t, "enabled", vmss.GetAnnotations()[vmIgnorePrometheusUpdatesAnnotation])
-	endpoints, _, _ := unstructured.NestedSlice(vmss.Object, "spec", "endpoints")
-	assert.Len(t, endpoints, 3)
-}
-
-func TestSyncVMServiceScrape_TeardownLeavesForeign(t *testing.T) {
-	converted := newVMServiceScrape()
-	converted.SetName("test-metrics")
-	converted.SetNamespace("default")
-
-	c := newVictoriaMetricsContext(t, `{"enabled":true}`, true, metricsMariaDB(0), converted)
-	require.NoError(t, SyncVMServiceScrape(c))
-	require.NoError(t, c.Get(newVMServiceScrape(), "test-metrics"), "a VMServiceScrape the provider does not control is kept")
-
-	// Without the CRD there is nothing to tear down.
-	c = newVictoriaMetricsContext(t, `{"enabled":true}`, false)
-	require.NoError(t, SyncVMServiceScrape(c))
-}
-
-func TestValidateMonitoring_VictoriaMetrics(t *testing.T) {
+func TestMetricsExporterRequired(t *testing.T) {
+	prom := acceptedBinding("prom", "prom", "prometheus", corev1alpha1.MonitoringExecutionModeExtensionManaged)
 	tests := []struct {
-		name         string
-		params       string
-		crdInstalled bool
-		wantErr      string
+		name    string
+		entries []corev1alpha1.InstanceMonitoringDestination
+		objs    []client.Object
+		want    bool
 	}{
-		{name: "metrics only", params: `{"enabled":true}`},
-		{name: "enabled with CRD", params: `{"enabled":true,"victoriaMetrics":{"enabled":true}}`, crdInstalled: true},
 		{
-			name:    "without metrics",
-			params:  `{"victoriaMetrics":{"enabled":true}}`,
-			wantErr: "requires metrics to be enabled",
+			name:    "a bound class requiring metrics runs the exporter",
+			entries: []corev1alpha1.InstanceMonitoringDestination{entry("prom", "prom")},
+			objs:    []client.Object{prom, metricsClass("prometheus", true)},
+			want:    true,
 		},
 		{
-			name:    "without CRD",
-			params:  `{"enabled":true,"victoriaMetrics":{"enabled":true}}`,
-			wantErr: "requires the VMServiceScrape CRD",
+			name:    "a bound class without metrics stops a live exporter",
+			entries: []corev1alpha1.InstanceMonitoringDestination{entry("prom", "prom")},
+			objs:    []client.Object{prom, metricsClass("prometheus", false), liveMetricsMariaDB(true)},
+		},
+		{
+			name: "no entries stop a live exporter",
+			objs: []client.Object{liveMetricsMariaDB(true)},
+		},
+		{
+			name:    "an entry without a binding yet holds the live exporter",
+			entries: []corev1alpha1.InstanceMonitoringDestination{entry("prom", "prom")},
+			objs:    []client.Object{liveMetricsMariaDB(true)},
+			want:    true,
+		},
+		{
+			name:    "an entry without a binding yet starts nothing",
+			entries: []corev1alpha1.InstanceMonitoringDestination{entry("prom", "prom")},
+			objs:    []client.Object{liveMetricsMariaDB(false)},
 		},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			err := validateMonitoring(newVictoriaMetricsContext(t, tt.params, tt.crdInstalled))
-			if tt.wantErr == "" {
-				require.NoError(t, err)
-				return
-			}
-			require.ErrorContains(t, err, tt.wantErr)
+			got, err := metricsExporterRequired(monitoringContext(t, tt.entries, true, tt.objs...))
+			require.NoError(t, err)
+			assert.Equal(t, tt.want, got)
 		})
 	}
 }
 
-func TestIsServiceMonitorEnabled(t *testing.T) {
-	tests := []struct {
-		name   string
-		params string
-		want   bool
-	}{
-		{name: "metrics disabled", params: `{"serviceMonitor":{"enabled":true}}`, want: false},
-		{name: "default", params: `{"enabled":true}`, want: true},
-		{name: "explicitly disabled", params: `{"enabled":true,"serviceMonitor":{"enabled":"false"}}`, want: false},
-		{name: "VictoriaMetrics default", params: `{"enabled":true,"victoriaMetrics":{"enabled":true}}`, want: false},
-		{
-			name:   "VictoriaMetrics with ServiceMonitor",
-			params: `{"enabled":true,"serviceMonitor":{"enabled":true},"victoriaMetrics":{"enabled":true}}`,
-			want:   true,
-		},
-	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			var params components.MonitoringParameters
-			require.NoError(t, json.Unmarshal([]byte(tt.params), &params))
-			assert.Equal(t, tt.want, isServiceMonitorEnabled(&params))
-		})
-	}
-	assert.False(t, isServiceMonitorEnabled(nil))
-}
+func TestBuildMetrics(t *testing.T) {
+	spec, objs := metricsMonitoring()
+	c := monitoringContext(t, spec.Destinations, true, objs...)
 
-func TestBuildMetrics_VictoriaMetricsDisablesServiceMonitor(t *testing.T) {
-	c := newVictoriaMetricsContext(t, `{"enabled":true,"victoriaMetrics":{"enabled":true}}`, true)
 	metrics, err := buildMetrics(c)
 	require.NoError(t, err)
-	require.NotNil(t, metrics.ServiceMonitor.Enabled)
-	assert.False(t, *metrics.ServiceMonitor.Enabled)
+	require.NotNil(t, metrics)
+	assert.True(t, metrics.Enabled)
+	assert.Equal(t, "prom/mysqld-exporter:v0.15.1", metrics.Exporter.Image, "the provider spec pins the exporter image")
+	assert.Equal(t, map[string]string{
+		controller.ProviderLabel: common.ProviderName,
+		controller.InstanceLabel: "test",
+	}, metrics.Exporter.PodMetadata.Labels)
+	assert.Equal(t, ptr.To(false), metrics.ServiceMonitor.Enabled, "class controllers create the scrape objects")
+	assert.Empty(t, c.LabelledComponents(), "the exporter is no component of the Instance")
+
+	metrics, err = buildMetrics(monitoringContext(t, nil, true))
+	require.NoError(t, err)
+	assert.Nil(t, metrics, "without a class requiring metrics the operator deploys no exporter")
 }
 
-// serviceMonitorFor returns the ServiceMonitor the operator creates for the
-// given MariaDB.
-func serviceMonitorFor(mdb *mariadbv1alpha1.MariaDB) *unstructured.Unstructured {
-	sm := &unstructured.Unstructured{}
-	sm.SetGroupVersionKind(serviceMonitorGVK)
-	sm.SetName("test-metrics")
-	sm.SetNamespace("default")
-	sm.SetOwnerReferences([]metav1.OwnerReference{{
-		APIVersion: "k8s.mariadb.com/v1alpha1", Kind: "MariaDB", Name: mdb.Name,
-		UID: mdb.UID, Controller: ptr.To(true),
-	}})
-	return sm
-}
+func TestMonitoringSources(t *testing.T) {
+	p := New()
 
-func TestSyncServiceMonitor(t *testing.T) {
-	disabled := func() *mariadbv1alpha1.MariaDB {
-		mdb := metricsMariaDB(0)
-		mdb.UID = "mdb-uid"
-		mdb.Spec.Metrics.ServiceMonitor.Enabled = ptr.To(false)
-		return mdb
-	}
-	smExists := func(t *testing.T, c *controller.Context) bool {
-		t.Helper()
-		sm := &unstructured.Unstructured{}
-		sm.SetGroupVersionKind(serviceMonitorGVK)
-		err := c.Get(sm, "test-metrics")
-		if apierrors.IsNotFound(err) {
-			return false
-		}
+	t.Run("one probe endpoint per MariaDB pod while the exporter runs", func(t *testing.T) {
+		s, err := p.MonitoringSources(monitoringContext(t, nil, true, liveMetricsMariaDB(true)))
 		require.NoError(t, err)
-		return true
+		require.Len(t, s.Metrics, 3)
+		for i, ep := range s.Metrics {
+			assert.Equal(t, corev1alpha1.MetricsEndpoint{
+				Component: common.ComponentEngine,
+				Kind:      "mariadb",
+				PodSelector: map[string]string{
+					controller.InstanceLabel:     "test",
+					"app.kubernetes.io/name":     "exporter",
+					"app.kubernetes.io/instance": "test-metrics",
+				},
+				Port:   intstr.FromString("metrics"),
+				Path:   "/probe",
+				Scheme: "http",
+				Params: map[string][]string{
+					"target": {fmt.Sprintf("test-%d.test-internal.default.svc.cluster.local:3306", i)},
+				},
+			}, ep)
+		}
+	})
+
+	for name, objs := range map[string][]client.Object{
+		"before the MariaDB exists": nil,
+		"without the exporter":      {liveMetricsMariaDB(false)},
+	} {
+		t.Run("nothing is published "+name, func(t *testing.T) {
+			s, err := p.MonitoringSources(monitoringContext(t, nil, true, objs...))
+			require.NoError(t, err)
+			require.NotNil(t, s, "nil would keep stale sources")
+			assert.Empty(t, s.Metrics)
+		})
 	}
+}
 
-	t.Run("deletes the operator ServiceMonitor once disabled", func(t *testing.T) {
-		mdb := disabled()
-		c := newVictoriaMetricsContext(t, `{"enabled":true,"victoriaMetrics":{"enabled":true}}`, true, mdb, serviceMonitorFor(mdb))
-		require.NoError(t, SyncServiceMonitor(c))
-		assert.False(t, smExists(t, c))
+// controlledBy returns an unstructured object of gvk named test-metrics,
+// controlled by owner when it is set.
+func controlledBy(gvk schema.GroupVersionKind, owner client.Object) *unstructured.Unstructured {
+	u := &unstructured.Unstructured{}
+	u.SetGroupVersionKind(gvk)
+	u.SetName("test-metrics")
+	u.SetNamespace("default")
+	if owner != nil {
+		u.SetOwnerReferences([]metav1.OwnerReference{{
+			APIVersion: "v1", Kind: "Owner", Name: owner.GetName(), UID: owner.GetUID(), Controller: ptr.To(true),
+		}})
+	}
+	return u
+}
+
+func exporterDeployment(owner client.Object) *appsv1.Deployment {
+	d := &appsv1.Deployment{ObjectMeta: metav1.ObjectMeta{Name: "test-metrics", Namespace: "default"}}
+	if owner != nil {
+		d.OwnerReferences = []metav1.OwnerReference{{
+			APIVersion: "v1", Kind: "Owner", Name: owner.GetName(), UID: owner.GetUID(), Controller: ptr.To(true),
+		}}
+	}
+	return d
+}
+
+func exists(t *testing.T, c *controller.Context, gvk schema.GroupVersionKind) bool {
+	t.Helper()
+	u := &unstructured.Unstructured{}
+	u.SetGroupVersionKind(gvk)
+	err := c.Get(u, "test-metrics")
+	if apierrors.IsNotFound(err) {
+		return false
+	}
+	require.NoError(t, err)
+	return true
+}
+
+func TestSyncMetricsCleanup(t *testing.T) {
+	instance := &corev1alpha1.Instance{ObjectMeta: metav1.ObjectMeta{Name: "test", UID: "uid"}}
+
+	t.Run("once metrics are off the exporter and scrape objects are deleted", func(t *testing.T) {
+		mdb := liveMetricsMariaDB(false)
+		c := monitoringContext(t, nil, true, mdb, exporterDeployment(mdb),
+			controlledBy(serviceMonitorGVK, mdb), controlledBy(vmServiceScrapeGVK, instance))
+		require.NoError(t, SyncMetricsCleanup(c))
+		assert.False(t, exists(t, c, deploymentGVK))
+		assert.False(t, exists(t, c, serviceMonitorGVK))
+		assert.False(t, exists(t, c, vmServiceScrapeGVK))
 	})
 
-	t.Run("waits for the MariaDB to disable it", func(t *testing.T) {
-		mdb := metricsMariaDB(0)
-		mdb.UID = "mdb-uid"
-		c := newVictoriaMetricsContext(t, `{"enabled":true,"serviceMonitor":{"enabled":false}}`, true, mdb, serviceMonitorFor(mdb))
-		require.NoError(t, SyncServiceMonitor(c))
-		assert.True(t, smExists(t, c))
+	t.Run("while metrics are on only the ServiceMonitor and VMServiceScrape go", func(t *testing.T) {
+		mdb := liveMetricsMariaDB(true)
+		c := monitoringContext(t, nil, true, mdb, exporterDeployment(mdb),
+			controlledBy(serviceMonitorGVK, mdb), controlledBy(vmServiceScrapeGVK, instance))
+		require.NoError(t, SyncMetricsCleanup(c))
+		assert.True(t, exists(t, c, deploymentGVK))
+		assert.False(t, exists(t, c, serviceMonitorGVK))
+		assert.False(t, exists(t, c, vmServiceScrapeGVK))
 	})
 
-	t.Run("keeps it while enabled", func(t *testing.T) {
-		mdb := disabled()
-		c := newVictoriaMetricsContext(t, `{"enabled":true}`, true, mdb, serviceMonitorFor(mdb))
-		require.NoError(t, SyncServiceMonitor(c))
-		assert.True(t, smExists(t, c))
+	t.Run("objects the owners do not control are left alone", func(t *testing.T) {
+		c := monitoringContext(t, nil, true, liveMetricsMariaDB(false), exporterDeployment(nil),
+			controlledBy(serviceMonitorGVK, nil), controlledBy(vmServiceScrapeGVK, nil))
+		require.NoError(t, SyncMetricsCleanup(c))
+		assert.True(t, exists(t, c, deploymentGVK))
+		assert.True(t, exists(t, c, serviceMonitorGVK))
+		assert.True(t, exists(t, c, vmServiceScrapeGVK))
 	})
 
-	t.Run("keeps a ServiceMonitor the MariaDB does not control", func(t *testing.T) {
-		mdb := disabled()
-		foreign := serviceMonitorFor(mdb)
-		foreign.SetOwnerReferences(nil)
-		c := newVictoriaMetricsContext(t, `{"enabled":true,"serviceMonitor":{"enabled":false}}`, true, mdb, foreign)
-		require.NoError(t, SyncServiceMonitor(c))
-		assert.True(t, smExists(t, c))
-	})
-
-	t.Run("no CRD", func(t *testing.T) {
-		c := newVictoriaMetricsContext(t, `{"enabled":true,"serviceMonitor":{"enabled":false}}`, false, disabled())
-		require.NoError(t, SyncServiceMonitor(c))
+	t.Run("missing CRDs and a missing MariaDB are nothing to clean up", func(t *testing.T) {
+		require.NoError(t, SyncMetricsCleanup(monitoringContext(t, nil, false, liveMetricsMariaDB(false))))
+		require.NoError(t, SyncMetricsCleanup(monitoringContext(t, nil, true)))
 	})
 }

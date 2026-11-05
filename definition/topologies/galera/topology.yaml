@@ -21,11 +21,6 @@ config:
               nodeSelector: {}
               tolerations: {}
               topologySpreadConstraints: {}
-    monitoring:
-      optional: true
-      supportedFields:
-        properties:
-          resources: {}
     proxy:
       optional: true
       supportedFields:
@@ -130,28 +125,6 @@ ui:
           componentsOrder:
             - numberOfNodes
             - resources
-
-    monitoring:
-      label: "Monitoring"
-      description: "Expose database metrics and integrate them with a Prometheus or VictoriaMetrics stack."
-      components:
-        enabled:
-          uiType: toggle
-          path: spec.components.monitoring.parameters.enabled
-          fieldParams:
-            label: "Enable metrics"
-            helperText: "Deploys the metrics exporter and a Prometheus ServiceMonitor. The ServiceMonitor requires the Prometheus Operator CRDs."
-            defaultValue: false
-        victoriaMetrics:
-          uiType: toggle
-          path: spec.components.monitoring.parameters.victoriaMetrics.enabled
-          fieldParams:
-            label: "VictoriaMetrics"
-            helperText: "Creates a VMServiceScrape for the VictoriaMetrics operator instead of the ServiceMonitor. Requires metrics to be enabled."
-            defaultValue: false
-      componentsOrder:
-        - enabled
-        - victoriaMetrics
 
     proxy:
       label: "Proxy"
@@ -273,7 +246,7 @@ ui:
             maxRows: 8
         podSchedulingPolicy:
           uiType: group
-          groupType: toggleable
+          groupType: bordered
           label: "Pod scheduling policy"
           components:
             policy:
@@ -288,7 +261,6 @@ ui:
   sectionsOrder:
     - databaseVersion
     - resources
-    - monitoring
     - proxy
     - security
     - advanced

@@ -1,5 +1,21 @@
-# The provider passes the disabled ServiceMonitor through to the MariaDB CR and
-# the exporter keeps running.
+# The victoriametrics entry resolves to ExtensionManaged like the prometheus
+# entry it replaces.
+apiVersion: monitoring.openeverest.io/v1alpha1
+kind: MonitoringBinding
+metadata:
+  labels:
+    core.openeverest.io/instance: test-instance-monitoring
+    monitoring.openeverest.io/entry: victoriametrics
+spec:
+  destinationRef:
+    name: victoriametrics-it
+  classRef:
+    name: victoriametrics-it
+  executionMode: ExtensionManaged
+status:
+  (conditions[?type == 'Accepted'].status | [0]): "True"
+---
+# Both classes require metrics: the exporter stays.
 apiVersion: k8s.mariadb.com/v1alpha1
 kind: MariaDB
 metadata:
@@ -7,12 +23,14 @@ metadata:
 spec:
   metrics:
     enabled: true
-    serviceMonitor:
-      enabled: false
 ---
+# The published endpoints are the ones the prometheus entry was scraping.
 apiVersion: core.openeverest.io/v1alpha1
 kind: Instance
 metadata:
   name: test-instance-monitoring
 status:
-  phase: Ready
+  monitoring:
+    (length(destinations)): 1
+    (destinations[0].name): victoriametrics
+    (length(sources.metrics)): 1

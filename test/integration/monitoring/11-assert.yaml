@@ -1,37 +1,41 @@
-# Assert the Instance reaches Ready once the mariadb-operator finishes
-# provisioning the cluster and the exporter sidecar.
+# While the exporter runs the provider publishes one probe endpoint per pod,
+# served by the exporter pods; the runtime stamps the identity labels.
 apiVersion: core.openeverest.io/v1alpha1
 kind: Instance
 metadata:
   name: test-instance-monitoring
 status:
   phase: Ready
-  components:
-    - name: engine
-      selector: core.openeverest.io/component=engine,core.openeverest.io/instance=test-instance-monitoring
-      replicas: 1
-      readyReplicas: 1
-    - name: monitoring
-      selector: core.openeverest.io/component=monitoring,core.openeverest.io/instance=test-instance-monitoring
-      replicas: 1
-      readyReplicas: 1
+  (components[?name == 'engine'] | [0]):
+    replicas: 1
+    readyReplicas: 1
+  (length(components)): 1
+  monitoring:
+    (destinations[?name == 'prometheus'] | [0]):
+      mode: ExtensionManaged
+    sources:
+      identity:
+        labels:
+          openeverest_instance: test-instance-monitoring
+          openeverest_namespace: ($namespace)
+          openeverest_provider: mariadb
+      metrics:
+        - component: engine
+          kind: mariadb
+          podSelector:
+            core.openeverest.io/instance: test-instance-monitoring
+            app.kubernetes.io/name: exporter
+            app.kubernetes.io/instance: test-instance-monitoring-metrics
+          port: metrics
+          path: /probe
+          scheme: http
+          params:
+            target:
+              - (join('', ['test-instance-monitoring-0.test-instance-monitoring-internal.', $namespace, '.svc.cluster.local:3306']))
 ---
-# The mariadb-operator creates a ServiceMonitor named <mariadb>-metrics once
-# the exporter Deployment is ready. Assert that it exists with the expected
-# release label, selector labels, and endpoint configuration.
-apiVersion: monitoring.coreos.com/v1
-kind: ServiceMonitor
+apiVersion: apps/v1
+kind: Deployment
 metadata:
   name: test-instance-monitoring-metrics
-  labels:
-    release: test
-spec:
-  selector:
-    matchLabels:
-      app.kubernetes.io/name: exporter
-      app.kubernetes.io/instance: test-instance-monitoring-metrics
-  endpoints:
-    - path: /probe
-      port: metrics
-      interval: 30s
-      scrapeTimeout: 10s
+status:
+  readyReplicas: 1
