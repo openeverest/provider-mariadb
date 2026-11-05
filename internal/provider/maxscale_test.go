@@ -96,7 +96,7 @@ func TestIsProxyEnabled(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got, err := isProxyEnabled(newProxyContext(t, "galera", "", tt.params))
+			got, err := isProxyEnabled(newProxyContext(t, "galera", "", tt.params).Instance())
 			require.NoError(t, err)
 			assert.Equal(t, tt.want, got)
 		})
@@ -189,40 +189,6 @@ func TestSyncMaxScale_MonitorParamsOnlyForReplication(t *testing.T) {
 	c = newProxyContext(t, "galera", "", `{"enabled":true}`)
 	require.NoError(t, SyncMaxScale(c))
 	assert.Nil(t, getMaxScale(t, c).Spec.Monitor.Params)
-}
-
-func TestValidateProxy(t *testing.T) {
-	tests := []struct {
-		name     string
-		topology string
-		params   string
-		replicas *int32
-		wantErr  bool
-	}{
-		{name: "absent on standalone"},
-		{name: "disabled on standalone", params: `{"enabled":false}`},
-		{name: "enabled on standalone", params: `{"enabled":true}`, wantErr: true},
-		{name: "enabled on galera", topology: "galera", params: `{"enabled":true}`},
-		{name: "enabled on replication", topology: "replication", params: `{"enabled":true}`},
-		{name: "zero replicas", topology: "galera", params: `{"enabled":true}`, replicas: ptr.To(int32(0)), wantErr: true},
-		{name: "malformed parameters", topology: "galera", params: `{"enabled":"maybe"}`, wantErr: true},
-	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			c := newProxyContext(t, tt.topology, "", tt.params)
-			if tt.replicas != nil {
-				proxy := c.Instance().Spec.Components[common.ComponentProxy]
-				proxy.Replicas = tt.replicas
-				c.Instance().Spec.Components[common.ComponentProxy] = proxy
-			}
-			err := validateProxy(c)
-			if tt.wantErr {
-				assert.Error(t, err)
-			} else {
-				assert.NoError(t, err)
-			}
-		})
-	}
 }
 
 func TestBuildConnectionDetails_ThroughMaxScale(t *testing.T) {

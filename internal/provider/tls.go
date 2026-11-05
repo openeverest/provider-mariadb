@@ -15,13 +15,16 @@
 package provider
 
 import (
+	"encoding/json"
 	"fmt"
 
 	mariadbv1alpha1 "github.com/mariadb-operator/mariadb-operator/v26/api/v1alpha1"
 	"k8s.io/utils/ptr"
 
+	corev1alpha1 "github.com/openeverest/openeverest/v2/api/core/v1alpha1"
 	"github.com/openeverest/openeverest/v2/provider-runtime/controller"
 
+	"github.com/openeverest/provider-mariadb/definition"
 	"github.com/openeverest/provider-mariadb/definition/components"
 	"github.com/openeverest/provider-mariadb/internal/common"
 )
@@ -43,16 +46,16 @@ type tlsSettings struct {
 // resolveTLSSettings decodes engine TLS parameters and applies provider
 // defaults. TLS is enabled by default; enforcement remains opt-in so existing
 // password-based clients can migrate without an abrupt connection failure.
-func resolveTLSSettings(c *controller.Context) (tlsSettings, error) {
+func resolveTLSSettings(in *corev1alpha1.Instance) (tlsSettings, error) {
 	settings := tlsSettings{
 		Enabled:  tlsEnabledByDefault,
 		Required: tlsRequiredByDefault,
 	}
 
-	engine := c.Instance().Spec.Components[common.ComponentEngine]
+	engine := in.Spec.Components[common.ComponentEngine]
 	var params components.MariadbParameters
 	if engine.Parameters != nil && engine.Parameters.Raw != nil {
-		if err := c.DecodeComponentParameters(engine, &params); err != nil {
+		if err := json.Unmarshal(engine.Parameters.Raw, &params); err != nil {
 			return tlsSettings{}, fmt.Errorf("decode engine parameters: %w", err)
 		}
 	}
@@ -70,7 +73,7 @@ func resolveTLSSettings(c *controller.Context) (tlsSettings, error) {
 	// SST encryption is a Galera-only concept, so the field is ignored (kept
 	// false) for other topologies rather than rejected — it lives in the shared
 	// TLS parameters struct and has no effect off Galera.
-	if isGaleraTopology(c) {
+	if in.GetTopologyType() == string(definition.TopologyTypeGalera) {
 		settings.GaleraSSTEnabled = settings.Enabled
 		if params.TLS != nil && params.TLS.GaleraSSTEnabled != nil {
 			settings.GaleraSSTEnabled = bool(*params.TLS.GaleraSSTEnabled)
@@ -80,22 +83,8 @@ func resolveTLSSettings(c *controller.Context) (tlsSettings, error) {
 	return settings, nil
 }
 
-func validateTLS(c *controller.Context) error {
-	settings, err := resolveTLSSettings(c)
-	if err != nil {
-		return err
-	}
-	if !settings.Enabled && settings.Required {
-		return fmt.Errorf("spec.components.%s.parameters.tls.required cannot be true when TLS is disabled", common.ComponentEngine)
-	}
-	if !settings.Enabled && settings.GaleraSSTEnabled {
-		return fmt.Errorf("spec.components.%s.parameters.tls.galeraSSTEnabled cannot be true when TLS is disabled", common.ComponentEngine)
-	}
-	return nil
-}
-
 func buildTLS(c *controller.Context) (*mariadbv1alpha1.TLS, error) {
-	settings, err := resolveTLSSettings(c)
+	settings, err := resolveTLSSettings(c.Instance())
 	if err != nil {
 		return nil, err
 	}

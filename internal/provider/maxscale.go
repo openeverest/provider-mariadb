@@ -15,6 +15,7 @@
 package provider
 
 import (
+	"encoding/json"
 	"fmt"
 
 	mariadbv1alpha1 "github.com/mariadb-operator/mariadb-operator/v26/api/v1alpha1"
@@ -23,6 +24,7 @@ import (
 	"k8s.io/utils/ptr"
 
 	commonv1alpha1 "github.com/openeverest/openeverest/v2/api/common/v1alpha1"
+	corev1alpha1 "github.com/openeverest/openeverest/v2/api/core/v1alpha1"
 	"github.com/openeverest/openeverest/v2/provider-runtime/controller"
 
 	"github.com/openeverest/provider-mariadb/definition/components"
@@ -41,13 +43,13 @@ func maxScaleName(instanceName string) string {
 
 // isProxyEnabled reports whether the proxy component requests MaxScale. A proxy
 // component without parameters is treated as disabled, making MaxScale opt-in.
-func isProxyEnabled(c *controller.Context) (bool, error) {
-	proxy, ok := c.Instance().Spec.Components[common.ComponentProxy]
+func isProxyEnabled(in *corev1alpha1.Instance) (bool, error) {
+	proxy, ok := in.Spec.Components[common.ComponentProxy]
 	if !ok || proxy.Parameters == nil || proxy.Parameters.Raw == nil {
 		return false, nil
 	}
 	var params components.MaxScaleParameters
-	if err := c.DecodeComponentParameters(proxy, &params); err != nil {
+	if err := json.Unmarshal(proxy.Parameters.Raw, &params); err != nil {
 		return false, fmt.Errorf("decode proxy parameters: %w", err)
 	}
 	return bool(params.Enabled), nil
@@ -58,7 +60,7 @@ func isProxyEnabled(c *controller.Context) (bool, error) {
 // owns are declared; the operator keeps owning the ones it defaults (servers,
 // monitor module, services, auth, TLS certificates, ...).
 func SyncMaxScale(c *controller.Context) error {
-	enabled, err := isProxyEnabled(c)
+	enabled, err := isProxyEnabled(c.Instance())
 	if err != nil {
 		return err
 	}
@@ -128,7 +130,7 @@ func desiredMaxScale(c *controller.Context) (*mariadbv1alpha1.MaxScale, error) {
 
 	scheduling := ptr.Deref(proxy.SchedulingPolicy, commonv1alpha1.SchedulingPolicy{})
 
-	tlsSettings, err := resolveTLSSettings(c)
+	tlsSettings, err := resolveTLSSettings(c.Instance())
 	if err != nil {
 		return nil, fmt.Errorf("resolve TLS settings: %w", err)
 	}

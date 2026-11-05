@@ -5,4 +5,4 @@ metadata:
   name: test-instance
 status:
   phase: Ready
-(length(status.conditions[?type == 'Ready' && reason == 'ValidationFailed'] || `[]`) == `0`): true
+(length(status.conditions[?type == 'Ready' && reason == 'InvalidReference'] || `[]`) == `0`): true

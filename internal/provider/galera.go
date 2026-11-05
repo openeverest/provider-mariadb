@@ -44,10 +44,15 @@ func isGaleraTopology(c *controller.Context) bool {
 // defaultReplicas returns the default replica count applied when the user leaves
 // engine.replicas unset, based on the selected topology.
 func defaultReplicas(c *controller.Context) int32 {
-	switch {
-	case isGaleraTopology(c):
+	return topologyDefaultReplicas(c.Instance().GetTopologyType())
+}
+
+// topologyDefaultReplicas returns the default node count of a topology.
+func topologyDefaultReplicas(topology string) int32 {
+	switch definition.TopologyType(topology) {
+	case definition.TopologyTypeGalera:
 		return galeraDefaultReplicas
-	case isReplicationTopology(c):
+	case definition.TopologyTypeReplication:
 		return replicationDefaultReplicas
 	default:
 		return standaloneDefaultReplicas

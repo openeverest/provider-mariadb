@@ -234,43 +234,6 @@ func TestDesiredPITRRef(t *testing.T) {
 	})
 }
 
-func TestValidatePITR(t *testing.T) {
-	t.Run("passes for replication with a physical schedule", func(t *testing.T) {
-		in := pitrInstance(string(definition.TopologyTypeReplication),
-			pitrStorage("s3", true, physicalSchedule("daily")))
-		c := newPITRContext(t, in)
-		require.NoError(t, validatePITR(c))
-	})
-	t.Run("rejects non-replication topology", func(t *testing.T) {
-		in := pitrInstance(string(definition.TopologyTypeStandalone),
-			pitrStorage("s3", true, physicalSchedule("daily")))
-		c := newPITRContext(t, in)
-		err := validatePITR(c)
-		require.Error(t, err)
-		assert.Contains(t, err.Error(), "replication")
-	})
-	t.Run("rejects missing physical schedule", func(t *testing.T) {
-		in := pitrInstance(string(definition.TopologyTypeReplication),
-			pitrStorage("s3", true, logicalSchedule("daily")))
-		c := newPITRContext(t, in)
-		err := validatePITR(c)
-		require.Error(t, err)
-	})
-	t.Run("rejects more than one PITR storage", func(t *testing.T) {
-		in := pitrInstance(string(definition.TopologyTypeReplication),
-			pitrStorage("s1", true, physicalSchedule("daily")),
-			pitrStorage("s2", true, physicalSchedule("daily")))
-		c := newPITRContext(t, in)
-		err := validatePITR(c)
-		require.Error(t, err)
-	})
-	t.Run("no-op when PITR disabled", func(t *testing.T) {
-		in := pitrInstance(string(definition.TopologyTypeStandalone), pitrStorage("s3", false))
-		c := newPITRContext(t, in)
-		require.NoError(t, validatePITR(c))
-	})
-}
-
 func instanceSeededFromPITR(target backupv1alpha1.RecoveryTarget, date *metav1.Time) *corev1alpha1.Instance {
 	return &corev1alpha1.Instance{
 		ObjectMeta: metav1.ObjectMeta{Name: "db", Namespace: "ns"},
@@ -437,32 +400,6 @@ func TestSyncRestoreRejectsPointInTimeInPlace(t *testing.T) {
 
 	// No operator Restore must be created for an in-place PITR attempt.
 	assert.True(t, controller.IsNotFound(c.Get(&mariadbv1alpha1.Restore{}, "restore-pit")))
-}
-
-
-func TestValidatePointInTimeDataSource(t *testing.T) {
-	t.Run("rejects recovery into a standalone instance", func(t *testing.T) {
-		in := instanceSeededFromPITR(backupv1alpha1.RecoveryTargetLatest, nil)
-		err := validatePointInTimeDataSource(newPITRContext(t, in))
-		require.Error(t, err)
-		assert.Contains(t, err.Error(), "replication")
-	})
-
-	t.Run("allows recovery into a replication instance", func(t *testing.T) {
-		in := instanceSeededFromPITR(backupv1alpha1.RecoveryTargetLatest, nil)
-		in.Spec.Topology = &corev1alpha1.TopologySpec{Type: "replication"}
-		assert.NoError(t, validatePointInTimeDataSource(newPITRContext(t, in)))
-	})
-
-	t.Run("keeps already recovered instances valid", func(t *testing.T) {
-		in := instanceSeededFromPITR(backupv1alpha1.RecoveryTargetLatest, nil)
-		existing := &mariadbv1alpha1.MariaDB{ObjectMeta: metav1.ObjectMeta{Name: "db", Namespace: "ns"}}
-		assert.NoError(t, validatePointInTimeDataSource(newPITRContext(t, in, existing)))
-	})
-
-	t.Run("ignores backup data sources", func(t *testing.T) {
-		assert.NoError(t, validatePointInTimeDataSource(newPITRContext(t, instanceSeededFrom("backup-1"))))
-	})
 }
 
 func TestSyncDataSourceStatusPointInTime(t *testing.T) {

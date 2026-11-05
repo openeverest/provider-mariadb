@@ -106,37 +106,12 @@ func TestResolveTLSSettings(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got, err := resolveTLSSettings(newTLSContext(t, tt.topology, tt.params))
+			got, err := resolveTLSSettings(newTLSContext(t, tt.topology, tt.params).Instance())
 			if err != nil {
 				t.Fatalf("resolveTLSSettings() error = %v", err)
 			}
 			if got != tt.want {
 				t.Fatalf("resolveTLSSettings() = %+v, want %+v", got, tt.want)
-			}
-		})
-	}
-}
-
-func TestValidateTLS(t *testing.T) {
-	tests := []struct {
-		name     string
-		topology string
-		params   string
-		wantErr  bool
-	}{
-		{name: "defaults are valid"},
-		{name: "required with TLS", params: `{"tls":{"required":true}}`},
-		{name: "required while disabled", params: `{"tls":{"enabled":false,"required":true}}`, wantErr: true},
-		{name: "SST encryption ignored on standalone", params: `{"tls":{"galeraSSTEnabled":true}}`},
-		{name: "SST encryption ignored on replication", topology: "replication", params: `{"tls":{"galeraSSTEnabled":true}}`},
-		{name: "SST encryption while disabled", topology: "galera", params: `{"tls":{"enabled":false,"galeraSSTEnabled":true}}`, wantErr: true},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			err := validateTLS(newTLSContext(t, tt.topology, tt.params))
-			if (err != nil) != tt.wantErr {
-				t.Fatalf("validateTLS() error = %v, wantErr %v", err, tt.wantErr)
 			}
 		})
 	}

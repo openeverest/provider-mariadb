@@ -19,6 +19,8 @@ metadata:
 spec:
   providerRef:
     name: mariadb
+  topology:
+    type: galera
   components:
     engine:
       type: mariadb

@@ -107,8 +107,9 @@ spec:
 
     # Downgrading a running Instance to an older MariaDB version is rejected:
     # its data directory has been upgraded by the newer server. Updates made
-    # outside the OpenEverest API bypass admission, so the provider blocks the
-    # Instance (Ready=False, ValidationFailed) and leaves the cluster untouched.
+    # outside the OpenEverest API bypass admission, so the provider checks them
+    # against the running MariaDB, blocks the Instance (Ready=False,
+    # InvalidReference) and leaves the cluster untouched.
     - name: reject-downgrade
       timeouts:
         assert: 2m

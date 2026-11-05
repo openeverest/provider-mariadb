@@ -22,6 +22,7 @@ import (
 	"github.com/stretchr/testify/require"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/utils/ptr"
+	"sigs.k8s.io/controller-runtime/pkg/client"
 
 	commonv1alpha1 "github.com/openeverest/openeverest/v2/api/common/v1alpha1"
 	corev1alpha1 "github.com/openeverest/openeverest/v2/api/core/v1alpha1"
@@ -118,7 +119,7 @@ func TestSyncReplicaTemplate(t *testing.T) {
 	})
 }
 
-func TestValidateReplicationScaleOut(t *testing.T) {
+func TestValidateReferences_ReplicationScaleOut(t *testing.T) {
 	tests := []struct {
 		name     string
 		instance *corev1alpha1.Instance
@@ -138,12 +139,13 @@ func TestValidateReplicationScaleOut(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			c := newContextForInstance(t, tt.instance)
+			objs := []client.Object{versionCatalogProvider()}
 			if tt.existing != nil {
-				c = newContextForInstance(t, tt.instance, tt.existing)
+				objs = append(objs, tt.existing)
 			}
-			err := validateReplicationScaleOut(c)
-			assert.Equal(t, tt.wantErr, err != nil, "err = %v", err)
+			errs, err := New().ValidateReferences(newContextForInstance(t, tt.instance, objs...))
+			require.NoError(t, err)
+			assert.Equal(t, tt.wantErr, len(errs) > 0, "errs = %v", errs)
 		})
 	}
 }

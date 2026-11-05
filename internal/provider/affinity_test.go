@@ -177,36 +177,3 @@ func TestConvertAffinity_NodeAffinity(t *testing.T) {
 		t.Errorf("node match field not mapped")
 	}
 }
-
-func TestValidateAffinity(t *testing.T) {
-	tests := []struct {
-		name    string
-		in      *corev1.Affinity
-		wantErr bool
-	}{
-		{name: "nil", in: nil, wantErr: false},
-		{
-			name:    "node affinity ok",
-			in:      &corev1.Affinity{NodeAffinity: &corev1.NodeAffinity{}},
-			wantErr: false,
-		},
-		{
-			name:    "pod anti-affinity ok",
-			in:      &corev1.Affinity{PodAntiAffinity: &corev1.PodAntiAffinity{}},
-			wantErr: false,
-		},
-		{
-			name:    "pod affinity rejected",
-			in:      &corev1.Affinity{PodAffinity: &corev1.PodAffinity{}},
-			wantErr: true,
-		},
-	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			err := validateAffinity(tt.in)
-			if (err != nil) != tt.wantErr {
-				t.Fatalf("validateAffinity() error = %v, wantErr %v", err, tt.wantErr)
-			}
-		})
-	}
-}

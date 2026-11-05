@@ -353,8 +353,9 @@ Source of truth: [definition/versions.yaml](definition/versions.yaml).
 - **Chart values:** [charts/provider-mariadb/values.yaml](charts/provider-mariadb/values.yaml)
 - **Instance parameters:** per-component and per-topology `parameters` schemas,
   defined under [definition/](definition/) and published on the `Provider`
-  resource (`kubectl get provider mariadb -o yaml`). The API server and the UI
-  validate user input against these schemas.
+  resource (`kubectl get provider mariadb -o yaml`). The provider checks every
+  Instance against these schemas before reconciling it, and the UI validates
+  user input against them.
 
 The main technology-specific knob is the engine's `configuration` parameter,
 which is passed through to the MariaDB server as `my.cnf`.
