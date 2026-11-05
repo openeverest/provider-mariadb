@@ -12,6 +12,3 @@ spec:
       replicas: 3
       storage:
         size: 10Gi
-    monitoring:
-      parameters:
-        enabled: true

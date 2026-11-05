@@ -40,11 +40,19 @@ package provider
 // +kubebuilder:rbac:groups=k8s.mariadb.com,resources=maxscales,verbs=get;list;watch;create;update;patch;delete
 // +kubebuilder:rbac:groups=k8s.mariadb.com,resources=maxscales/status,verbs=get
 
-// ServiceMonitor CRs — the operator does not delete the ServiceMonitor once disabled.
+// Metrics exporter cleanup — the operator does not delete its exporter
+// Deployment or ServiceMonitor once disabled, and earlier provider versions
+// created a VMServiceScrape.
+// +kubebuilder:rbac:groups=apps,resources=deployments,verbs=get;delete
 // +kubebuilder:rbac:groups=monitoring.coreos.com,resources=servicemonitors,verbs=get;delete
+// +kubebuilder:rbac:groups=operator.victoriametrics.com,resources=vmservicescrapes,verbs=get;delete
 
-// VMServiceScrape CRs — VictoriaMetrics scraping of the metrics exporter.
-// +kubebuilder:rbac:groups=operator.victoriametrics.com,resources=vmservicescrapes,verbs=get;list;watch;create;update;patch;delete
+// =============================================================================
+// MONITORING RESOURCES
+// =============================================================================
+// +kubebuilder:rbac:groups=monitoring.openeverest.io,resources=monitoringclasses;monitoringdestinations;monitoringbindings,verbs=get;list;watch
+// +kubebuilder:rbac:groups=monitoring.openeverest.io,resources=monitoringbindings/status,verbs=patch
+// +kubebuilder:rbac:groups="",resources=namespaces,verbs=get
 
 // =============================================================================
 // OPENEVEREST BACKUP RESOURCES

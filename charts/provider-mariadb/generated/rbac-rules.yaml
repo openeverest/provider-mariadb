@@ -3,6 +3,12 @@
 - apiGroups:
     - ""
   resources:
+    - namespaces
+  verbs:
+    - get
+- apiGroups:
+    - ""
+  resources:
     - pods
     - services
   verbs:
@@ -28,6 +34,13 @@
   verbs:
     - create
     - patch
+- apiGroups:
+    - apps
+  resources:
+    - deployments
+  verbs:
+    - delete
+    - get
 - apiGroups:
     - backup.openeverest.io
   resources:
@@ -153,14 +166,25 @@
     - delete
     - get
 - apiGroups:
+    - monitoring.openeverest.io
+  resources:
+    - monitoringbindings
+    - monitoringclasses
+    - monitoringdestinations
+  verbs:
+    - get
+    - list
+    - watch
+- apiGroups:
+    - monitoring.openeverest.io
+  resources:
+    - monitoringbindings/status
+  verbs:
+    - patch
+- apiGroups:
     - operator.victoriametrics.com
   resources:
     - vmservicescrapes
   verbs:
-    - create
     - delete
     - get
-    - list
-    - patch
-    - update
-    - watch

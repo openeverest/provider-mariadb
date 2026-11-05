@@ -1,6 +1,4 @@
-# Instance with monitoring enabled — exercises the provider's monitoring
-# component wiring. The parameter shape mirrors examples/instance-monitoring.yaml
-# and the MonitoringParameters struct in definition/components/types.go.
+# Instance bound to the prometheus destination; no monitoring component.
 apiVersion: core.openeverest.io/v1alpha1
 kind: Instance
 metadata:
@@ -21,10 +19,8 @@ spec:
           memory: 512M
       storage:
         size: 1Gi
-    monitoring:
-      parameters:
-        enabled: true
-        serviceMonitor:
-          prometheusRelease: test
-          interval: 30s
-          scrapeTimeout: 10s
+  monitoring:
+    destinations:
+      - name: prometheus
+        destinationRef:
+          name: prometheus-it

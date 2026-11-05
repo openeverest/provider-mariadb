@@ -34,8 +34,8 @@ permissions:
 env:
   IMG: provider-mariadb:ci
   # Ref of openeverest/openeverest to build the platform from. Pinned to the
-  # release tag matching the core version in go.mod.
-  OPENEVEREST_BRANCH: v2.0.0-dev.4
+  # commit of the core version in go.mod.
+  OPENEVEREST_BRANCH: 02a02d35d69a0f17ac89dc9b95712709346af77c
 
 jobs:
   run:
@@ -84,8 +84,6 @@ jobs:
 
       - name: Install CRDs
         run: make install-crds
-        env:
-          OPENEVEREST_BRANCH: ${{ env.OPENEVEREST_BRANCH }}
 
       - name: Deploy provider
         run: make deploy-provider-ci
