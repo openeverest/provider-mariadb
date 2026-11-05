@@ -1,0 +1,9 @@
+# Matched by label: the configuration is named after the Helm release.
+apiVersion: admissionregistration.k8s.io/v1
+kind: ValidatingWebhookConfiguration
+metadata:
+  labels:
+    openeverest.io/provider: mariadb
+webhooks:
+  - name: instances.mariadb.openeverest.io
+    failurePolicy: Ignore

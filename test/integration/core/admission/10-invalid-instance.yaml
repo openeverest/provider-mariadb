@@ -1,0 +1,21 @@
+# Two nodes on the standalone topology, which runs a single node.
+apiVersion: core.openeverest.io/v1alpha1
+kind: Instance
+metadata:
+  name: test-mariadb-admission
+spec:
+  providerRef:
+    name: mariadb
+  components:
+    engine:
+      type: mariadb
+      replicas: 2
+      resources:
+        limits:
+          cpu: "1"
+          memory: 1G
+        requests:
+          cpu: 250m
+          memory: 512M
+      storage:
+        size: 1Gi
