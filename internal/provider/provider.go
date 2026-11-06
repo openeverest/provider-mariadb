@@ -33,11 +33,12 @@ import (
 
 // Compile-time checks that MariaDBProvider implements the required interfaces.
 var (
-	_ controller.ProviderInterface = (*MariaDBProvider)(nil)
-	_ controller.BackupProvider    = (*MariaDBProvider)(nil)
-	_ controller.BackupWatcher     = (*MariaDBProvider)(nil)
-	_ controller.RestoreWatcher    = (*MariaDBProvider)(nil)
-	_ controller.BackupMirror      = (*MariaDBProvider)(nil)
+	_ controller.ProviderInterface  = (*MariaDBProvider)(nil)
+	_ controller.ReferenceValidator = (*MariaDBProvider)(nil)
+	_ controller.BackupProvider     = (*MariaDBProvider)(nil)
+	_ controller.BackupWatcher      = (*MariaDBProvider)(nil)
+	_ controller.RestoreWatcher     = (*MariaDBProvider)(nil)
+	_ controller.BackupMirror       = (*MariaDBProvider)(nil)
 )
 
 // MariaDBProvider implements controller.ProviderInterface for MariaDB via mariadb-operator.
@@ -68,12 +69,6 @@ func New() *MariaDBProvider {
 			},
 		},
 	}
-}
-
-// Validate checks if the Instance spec is valid before a create/update is accepted.
-// Called by the validation webhook.
-func (p *MariaDBProvider) Validate(c *controller.Context) error {
-	return ValidateMariaDB(c)
 }
 
 // Sync ensures the MariaDB CR exists and reflects the current Instance spec.

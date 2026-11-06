@@ -17,6 +17,7 @@ package provider
 import (
 	"fmt"
 	"regexp"
+	"slices"
 	"strconv"
 	"strings"
 
@@ -24,7 +25,7 @@ import (
 	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/api/resource"
-	"sigs.k8s.io/controller-runtime/pkg/log"
+	"k8s.io/apimachinery/pkg/util/validation/field"
 
 	backupv1alpha1 "github.com/openeverest/openeverest/v2/api/backup/v1alpha1"
 	corev1alpha1 "github.com/openeverest/openeverest/v2/api/core/v1alpha1"
@@ -34,409 +35,383 @@ import (
 	"github.com/openeverest/provider-mariadb/internal/common"
 )
 
-// ValidateMariaDB validates the Instance spec for the MariaDB provider.
-func ValidateMariaDB(c *controller.Context) error {
-	l := log.FromContext(c.Context())
-	l.Info("Validating MariaDB instance", "name", c.Name())
+var (
+	componentsPath = field.NewPath("spec", "components")
+	enginePath     = componentsPath.Key(common.ComponentEngine)
+	proxyPath      = componentsPath.Key(common.ComponentProxy)
+	monitoringPath = componentsPath.Key(common.ComponentMonitoring)
 
-	if err := validateComponents(c); err != nil {
-		l.Error(err, "Component validation failed", "name", c.Name())
-		return fmt.Errorf("component validation: %w", err)
-	}
+	minStorageSize = resource.MustParse("1Gi")
 
-	if err := validateMonitoring(c); err != nil {
-		l.Error(err, "Monitoring validation failed", "name", c.Name())
-		return fmt.Errorf("monitoring validation: %w", err)
-	}
-
-	if err := validateProxy(c); err != nil {
-		l.Error(err, "Proxy validation failed", "name", c.Name())
-		return fmt.Errorf("proxy validation: %w", err)
-	}
-
-	if err := validateTopology(c); err != nil {
-		l.Error(err, "Topology validation failed", "name", c.Name())
-		return fmt.Errorf("topology validation: %w", err)
-	}
-
-	if err := validateEngineUpdate(c); err != nil {
-		l.Error(err, "Engine update validation failed", "name", c.Name())
-		return fmt.Errorf("engine update validation: %w", err)
-	}
-
-	if err := validateTLS(c); err != nil {
-		l.Error(err, "TLS validation failed", "name", c.Name())
-		return fmt.Errorf("TLS validation: %w", err)
-	}
-
-	if err := validatePITR(c); err != nil {
-		l.Error(err, "PITR validation failed", "name", c.Name())
-		return fmt.Errorf("PITR validation: %w", err)
-	}
-
-	if err := validatePointInTimeDataSource(c); err != nil {
-		l.Error(err, "Data source validation failed", "name", c.Name())
-		return fmt.Errorf("data source validation: %w", err)
-	}
-
-	return nil
-}
-
-// validatePointInTimeDataSource rejects point-in-time recovery into a
-// non-replication Instance: mariadb-operator only replays binary logs on
-// replication clusters, so such a recovery would silently stop at the base
-// backup. Only checked at creation, so already-recovered Instances keep
-// validating.
-func validatePointInTimeDataSource(c *controller.Context) error {
-	ds := c.Instance().Spec.DataSource
-	if ds == nil || ds.Type != backupv1alpha1.DataSourceTypePointInTime {
-		return nil
-	}
-	if normalizeTopology(c.Instance().GetTopologyType()) == definition.TopologyTypeReplication {
-		return nil
-	}
-	if err := c.Get(&mariadbv1alpha1.MariaDB{}, c.Name()); err == nil {
-		return nil
-	} else if !apierrors.IsNotFound(err) {
-		return fmt.Errorf("get MariaDB: %w", err)
-	}
-	return fmt.Errorf(
-		"point-in-time recovery is only supported into the %q topology; set spec.topology.type to %q",
-		definition.TopologyTypeReplication,
-		definition.TopologyTypeReplication,
-	)
-}
-
-// validatePITR enforces the constraints of point-in-time recovery: the
-// mariadb-operator archives binary logs from the single primary of the
-// asynchronous replication topology, so PITR requires that topology, at most one
-// PITR-enabled storage, and a physical backup schedule on that storage to serve
-// as the full base backup.
-func validatePITR(c *controller.Context) error {
-	storage, err := pitrEnabledStorage(c.Instance().Spec.Backup)
-	if err != nil {
-		return err
-	}
-	if storage == nil {
-		return nil
-	}
-	if normalizeTopology(c.Instance().GetTopologyType()) != definition.TopologyTypeReplication {
-		return fmt.Errorf(
-			"point-in-time recovery is only supported on the %q topology; storage %q has pitr.enabled=true",
-			definition.TopologyTypeReplication,
-			storage.StorageRef.Name,
-		)
-	}
-	if _, err := firstPhysicalSchedule(storage); err != nil {
-		return err
-	}
-	return nil
-}
-
-// validateMonitoring ensures the monitoring component parameters are decodable
-// and, when metrics are enabled, that an exporter image can be resolved. A
-// VMServiceScrape requires metrics and the VMServiceScrape CRD.
-func validateMonitoring(c *controller.Context) error {
-	params, err := monitoringParams(c)
-	if err != nil {
-		return err
-	}
-	if params == nil {
-		return nil
-	}
-	if params.VictoriaMetrics.Enabled && !params.Enabled {
-		return fmt.Errorf("victoriaMetrics requires metrics to be enabled")
-	}
-	if !params.Enabled {
-		return nil
-	}
-
-	image, err := resolveExporterImage(c)
-	if err != nil {
-		return err
-	}
-	if image == "" {
-		return fmt.Errorf("unable to resolve a mysqld-exporter image for the monitoring component")
-	}
-
-	if params.VictoriaMetrics.Enabled {
-		installed, err := vmServiceScrapeCRDInstalled(c)
-		if err != nil {
-			return err
-		}
-		if !installed {
-			return fmt.Errorf("victoriaMetrics requires the VMServiceScrape CRD (operator.victoriametrics.com) to be installed")
-		}
-	}
-	return nil
-}
-
-// validateProxy checks the proxy component when MaxScale is enabled: it needs
-// an HA topology to front, at least one replica, a supported Service type and
-// a resolvable image.
-func validateProxy(c *controller.Context) error {
-	enabled, err := isProxyEnabled(c)
-	if err != nil || !enabled {
-		return err
-	}
-	if !isHATopology(c) {
-		return fmt.Errorf(
-			"the %q component is only supported on the %q and %q topologies",
-			common.ComponentProxy,
-			definition.TopologyTypeGalera,
-			definition.TopologyTypeReplication,
-		)
-	}
-
-	proxy := c.Instance().Spec.Components[common.ComponentProxy]
-	if proxy.Replicas != nil && *proxy.Replicas < 1 {
-		return fmt.Errorf("proxy replicas must be at least 1, got %d", *proxy.Replicas)
-	}
-	if err := validateService(common.ComponentProxy, proxy.Service); err != nil {
-		return err
-	}
-	if proxy.SchedulingPolicy != nil {
-		if err := validateAffinity(proxy.SchedulingPolicy.Affinity); err != nil {
-			return err
-		}
-	}
-
-	image, err := resolveMaxScaleImage(c)
-	if err != nil {
-		return err
-	}
-	if image == "" {
-		return fmt.Errorf("unable to resolve a MaxScale image for the %q component", common.ComponentProxy)
-	}
-	return nil
-}
-
-// validateComponents verifies that required components are present and their values are sane.
-func validateComponents(c *controller.Context) error {
-	engine, ok := c.Instance().Spec.Components[common.ComponentEngine]
-	if !ok {
-		return fmt.Errorf("component %q is required", common.ComponentEngine)
-	}
-
-	if engine.Replicas != nil && *engine.Replicas < 1 {
-		return fmt.Errorf("engine replicas must be at least 1, got %d", *engine.Replicas)
-	}
-
-	if engine.Storage != nil && !engine.Storage.Size.IsZero() {
-		if engine.Storage.Size.Cmp(mustParseQuantity("1Gi")) < 0 {
-			return fmt.Errorf("engine storage size must be at least 1Gi")
-		}
-	}
-
-	if err := validateService(common.ComponentEngine, engine.Service); err != nil {
-		return err
-	}
-
-	if schedulingPolicy := engine.SchedulingPolicy; schedulingPolicy != nil {
-		if err := validateAffinity(schedulingPolicy.Affinity); err != nil {
-			return err
-		}
-	}
-
-	return nil
-}
-
-// validateService ensures the requested Service type is one the operator supports.
-func validateService(componentName string, svc *corev1alpha1.Service) error {
-	if svc == nil || svc.ServiceType == "" {
-		return nil
-	}
-
-	switch svc.ServiceType {
-	case corev1.ServiceTypeClusterIP,
+	// supportedServiceTypes are the Service types the operator can expose.
+	supportedServiceTypes = []corev1.ServiceType{
+		corev1.ServiceTypeClusterIP,
 		corev1.ServiceTypeLoadBalancer,
-		corev1.ServiceTypeNodePort:
-		return nil
-	default:
-		return fmt.Errorf(
-			"spec.components.%s.service.serviceType must be one of ClusterIP, LoadBalancer or NodePort",
-			componentName,
-		)
+		corev1.ServiceTypeNodePort,
 	}
+)
+
+// Validate checks the rules about the Instance alone. The runtime runs it once
+// the Instance matches the topologies, components, versions and parameter
+// schemas the Provider declares.
+func (p *MariaDBProvider) Validate(in controller.ValidationInput) controller.ValidationResult {
+	spec := &in.Provider.Spec
+	instance := in.Instance
+
+	errs := validateEngine(instance)
+	errs = append(errs, validateProxy(spec, instance)...)
+	errs = append(errs, validateMonitoring(spec, instance)...)
+	errs = append(errs, validateTLS(instance)...)
+	errs = append(errs, validatePITR(instance)...)
+	errs = append(errs, validateDataSource(instance)...)
+	if _, ok := instance.Spec.Components[common.ComponentEngine]; ok && provisioned(in.Old) {
+		errs = append(errs, validateEngineChange(spec, instance, instanceEngineState(spec, in.Old))...)
+	}
+
+	return controller.ValidationResult{Errors: errs}
 }
 
-// validateTopology checks the selected topology, its per-topology replica
-// rules, and that the topology is not being changed on an existing instance.
-func validateTopology(c *controller.Context) error {
-	topology := c.Instance().GetTopologyType()
-	switch topology {
-	case "", string(definition.TopologyTypeStandalone):
-		if err := validateStandaloneReplicas(c); err != nil {
-			return err
-		}
-	case string(definition.TopologyTypeGalera):
-		if err := validateGaleraReplicas(c); err != nil {
-			return err
-		}
-	case string(definition.TopologyTypeReplication):
-		if err := validateReplicationReplicas(c); err != nil {
-			return err
-		}
-		if err := validateReplicationScaleOut(c); err != nil {
-			return err
-		}
-	default:
-		return fmt.Errorf(
-			"unsupported spec.topology.type %q; supported values are %q, %q and %q",
-			topology,
-			definition.TopologyTypeStandalone,
-			definition.TopologyTypeGalera,
-			definition.TopologyTypeReplication,
-		)
-	}
-	return validateTopologyImmutable(c, topology)
-}
-
-// validateStandaloneReplicas enforces that the standalone topology runs a single
-// node; MariaDB has no clustering without Galera, so more than one replica is invalid.
-func validateStandaloneReplicas(c *controller.Context) error {
-	engine := c.Instance().Spec.Components[common.ComponentEngine]
-	if engine.Replicas != nil && *engine.Replicas != standaloneDefaultReplicas {
-		return fmt.Errorf(
-			"standalone topology supports a single node only, got %d; use the galera or replication topology for multiple nodes",
-			*engine.Replicas,
-		)
-	}
-	return nil
-}
-
-// validateGaleraReplicas enforces Galera's quorum requirement: an odd number of
-// engine nodes, at least 3.
-func validateGaleraReplicas(c *controller.Context) error {
-	engine := c.Instance().Spec.Components[common.ComponentEngine]
-	replicas := galeraDefaultReplicas
-	if engine.Replicas != nil {
-		replicas = *engine.Replicas
-	}
-	if replicas < 3 {
-		return fmt.Errorf("galera topology requires at least 3 engine replicas, got %d", replicas)
-	}
-	if replicas%2 == 0 {
-		return fmt.Errorf(
-			"galera topology requires an odd number of engine replicas to avoid split-brain, got %d",
-			replicas,
-		)
-	}
-	return nil
-}
-
-// validateReplicationReplicas enforces that the replication topology runs at
-// least 2 nodes: one primary and one replica.
-func validateReplicationReplicas(c *controller.Context) error {
-	engine := c.Instance().Spec.Components[common.ComponentEngine]
-	replicas := replicationDefaultReplicas
-	if engine.Replicas != nil {
-		replicas = *engine.Replicas
-	}
-	if replicas < 2 {
-		return fmt.Errorf(
-			"replication topology requires at least 2 engine replicas (one primary and one replica), got %d",
-			replicas,
-		)
-	}
-	return nil
-}
-
-// validateReplicationScaleOut rejects adding nodes to an existing replication
-// Instance without a backup storage: the operator seeds new replicas from a
-// physical backup of the cluster, staged in that storage.
-func validateReplicationScaleOut(c *controller.Context) error {
-	if replicaTemplateStorage(c.Instance()) != nil {
-		return nil
-	}
-	existing := &mariadbv1alpha1.MariaDB{}
-	if err := c.Get(existing, c.Name()); err != nil {
-		if apierrors.IsNotFound(err) {
-			return nil
-		}
-		return fmt.Errorf("get MariaDB: %w", err)
-	}
-	engine := c.Instance().Spec.Components[common.ComponentEngine]
-	if engine.Replicas == nil || *engine.Replicas <= existing.Spec.Replicas {
-		return nil
-	}
-	return fmt.Errorf(
-		"scaling out the %q topology requires a backup storage in spec.backup: "+
-			"new replicas are seeded from a physical backup of the cluster staged there",
-		definition.TopologyTypeReplication,
-	)
-}
-
-// validateEngineUpdate rejects engine changes an existing cluster cannot apply.
-// The previous Instance is not available at admission, so the provisioned
-// MariaDB CR is the reference; nothing is checked at creation.
-func validateEngineUpdate(c *controller.Context) error {
-	existing := &mariadbv1alpha1.MariaDB{}
-	if err := c.Get(existing, c.Name()); err != nil {
-		if apierrors.IsNotFound(err) {
-			return nil
-		}
-		return fmt.Errorf("get MariaDB: %w", err)
-	}
-	engine := c.Instance().Spec.Components[common.ComponentEngine]
-	if err := validateVersionDowngrade(c, engine, existing); err != nil {
-		return err
-	}
-	return validateStorageUpdate(engine, existing)
-}
-
-// validateVersionDowngrade rejects moving the engine to an older major or minor
-// version: the data directory is upgraded on version changes
-// (mariaDBAutoUpgradeEnabled) and older servers cannot be relied on to read it.
-// Patch-level changes, and images whose tag has no recognizable version, are
-// allowed.
-func validateVersionDowngrade(c *controller.Context, engine corev1alpha1.ComponentSpec, existing *mariadbv1alpha1.MariaDB) error {
-	engine, err := withBundleVersion(c, engine)
+// ValidateReferences checks the VMServiceScrape CRD and the update against the deployed MariaDB.
+func (p *MariaDBProvider) ValidateReferences(c *controller.Context) (field.ErrorList, error) {
+	errs, err := validateVMServiceScrapeCRD(c)
 	if err != nil {
-		return err
+		return nil, err
 	}
-	image, err := resolveEngineImage(c, engine)
-	if err != nil {
-		return err
-	}
-	current, ok := imageMinorVersion(existing.Spec.Image)
-	if !ok {
-		return nil
-	}
-	desired, ok := imageMinorVersion(image)
-	if !ok {
-		return nil
-	}
-	if desired[0] < current[0] || (desired[0] == current[0] && desired[1] < current[1]) {
-		return fmt.Errorf(
-			"downgrading MariaDB from %d.%d to %d.%d is not supported; restore a backup into a new Instance instead",
-			current[0], current[1], desired[0], desired[1],
-		)
-	}
-	return nil
-}
 
-// withBundleVersion fills in the engine version from the Instance's version
-// bundle, as the runtime does before Sync but not before admission, so the
-// image validated is the one Sync will deploy.
-func withBundleVersion(c *controller.Context, engine corev1alpha1.ComponentSpec) (corev1alpha1.ComponentSpec, error) {
-	if engine.Image != "" || engine.Version != "" {
-		return engine, nil
+	mdb := &mariadbv1alpha1.MariaDB{}
+	if err := c.Get(mdb, c.Name()); err != nil {
+		if apierrors.IsNotFound(err) {
+			return errs, nil
+		}
+		return nil, fmt.Errorf("get MariaDB: %w", err)
 	}
 	spec, err := c.ProviderSpec()
 	if err != nil {
-		return engine, fmt.Errorf("get provider spec: %w", err)
+		return nil, fmt.Errorf("get provider spec: %w", err)
 	}
-	name := controller.EffectiveVersionBundleName(spec, c.Instance())
-	if name == "" {
-		return engine, nil
+
+	return append(errs, validateEngineChange(spec, c.Instance(), mariaDBEngineState(mdb))...), nil
+}
+
+// validateEngine checks the engine's node count, storage size, Service and scheduling.
+func validateEngine(in *corev1alpha1.Instance) field.ErrorList {
+	engine, ok := in.Spec.Components[common.ComponentEngine]
+	if !ok {
+		return field.ErrorList{field.Required(enginePath, "")}
 	}
-	bundle, err := controller.ResolveVersionBundle(spec, name)
+
+	errs := validateEngineReplicas(in)
+	if engine.Storage != nil && !engine.Storage.Size.IsZero() && engine.Storage.Size.Cmp(minStorageSize) < 0 {
+		errs = append(errs, field.Invalid(enginePath.Child("storage", "size"), engine.Storage.Size.String(),
+			"must be at least "+minStorageSize.String(),
+		))
+	}
+	return append(errs, validateServiceAndScheduling(enginePath, engine)...)
+}
+
+// validateEngineReplicas checks the engine's node count against its topology.
+func validateEngineReplicas(in *corev1alpha1.Instance) field.ErrorList {
+	path := enginePath.Child("replicas")
+	replicas := engineReplicas(in)
+
+	switch normalizeTopology(in.GetTopologyType()) {
+	case definition.TopologyTypeStandalone:
+		if replicas != standaloneDefaultReplicas {
+			return field.ErrorList{field.Invalid(path, replicas,
+				"the standalone topology runs a single node; use the galera or replication topology for more",
+			)}
+		}
+	case definition.TopologyTypeGalera:
+		if replicas < 3 || replicas%2 == 0 {
+			return field.ErrorList{field.Invalid(path, replicas,
+				"the galera topology needs an odd number of nodes, at least 3, to avoid split-brain",
+			)}
+		}
+	case definition.TopologyTypeReplication:
+		if replicas < 2 {
+			return field.ErrorList{field.Invalid(path, replicas,
+				"the replication topology needs at least 2 nodes: a primary and a replica",
+			)}
+		}
+	}
+	return nil
+}
+
+// validateServiceAndScheduling checks a component's Service type and affinity against the operator's.
+func validateServiceAndScheduling(path *field.Path, component corev1alpha1.ComponentSpec) field.ErrorList {
+	var errs field.ErrorList
+	if svc := component.Service; svc != nil && svc.ServiceType != "" && !slices.Contains(supportedServiceTypes, svc.ServiceType) {
+		errs = append(errs, field.NotSupported(path.Child("service", "serviceType"), svc.ServiceType, supportedServiceTypes))
+	}
+	if policy := component.SchedulingPolicy; policy != nil && policy.Affinity != nil && policy.Affinity.PodAffinity != nil {
+		errs = append(errs, field.Forbidden(path.Child("schedulingPolicy", "affinity", "podAffinity"),
+			"the MariaDB operator supports nodeAffinity and podAntiAffinity only",
+		))
+	}
+	return errs
+}
+
+// validateProxy checks MaxScale when the proxy enables it.
+func validateProxy(spec *corev1alpha1.ProviderSpec, in *corev1alpha1.Instance) field.ErrorList {
+	enabled, err := isProxyEnabled(in)
 	if err != nil {
-		return engine, err
+		return field.ErrorList{field.Invalid(proxyPath.Child("parameters"), field.OmitValueType{}, err.Error())}
 	}
-	engine.Version = bundle.Components[common.ComponentEngine]
-	return engine, nil
+	if !enabled {
+		return nil
+	}
+
+	var errs field.ErrorList
+	switch normalizeTopology(in.GetTopologyType()) {
+	case definition.TopologyTypeGalera, definition.TopologyTypeReplication:
+	default:
+		errs = append(errs, field.Forbidden(proxyPath.Child("parameters", "enabled"),
+			"MaxScale is only supported on the galera and replication topologies",
+		))
+	}
+	proxy := in.Spec.Components[common.ComponentProxy]
+	if proxy.Replicas != nil && *proxy.Replicas < 1 {
+		errs = append(errs, field.Invalid(proxyPath.Child("replicas"), *proxy.Replicas, "must be at least 1"))
+	}
+	errs = append(errs, validateServiceAndScheduling(proxyPath, proxy)...)
+	return append(errs, validateImage(spec, in, proxyPath, common.ComponentProxy)...)
+}
+
+// validateMonitoring checks the metrics exporter parameters and image.
+func validateMonitoring(spec *corev1alpha1.ProviderSpec, in *corev1alpha1.Instance) field.ErrorList {
+	monitoring, ok := in.Spec.Components[common.ComponentMonitoring]
+	if !ok {
+		return nil
+	}
+	if monitoring.Parameters == nil || monitoring.Parameters.Raw == nil {
+		return field.ErrorList{field.Required(monitoringPath.Child("parameters"), "")}
+	}
+	params, err := monitoringParams(in)
+	if err != nil {
+		return field.ErrorList{field.Invalid(monitoringPath.Child("parameters"), field.OmitValueType{}, err.Error())}
+	}
+	if !params.Enabled {
+		if params.VictoriaMetrics.Enabled {
+			return field.ErrorList{field.Invalid(monitoringPath.Child("parameters", "victoriaMetrics", "enabled"), true,
+				"requires spec.components[monitoring].parameters.enabled",
+			)}
+		}
+		return nil
+	}
+	return validateImage(spec, in, monitoringPath, common.ComponentMonitoring)
+}
+
+// validateVMServiceScrapeCRD checks the cluster serves the CRD VictoriaMetrics scraping needs.
+func validateVMServiceScrapeCRD(c *controller.Context) (field.ErrorList, error) {
+	params, err := monitoringParams(c.Instance())
+	if err != nil {
+		return nil, err
+	}
+	if !isVictoriaMetricsEnabled(params) {
+		return nil, nil
+	}
+	installed, err := vmServiceScrapeCRDInstalled(c)
+	if err != nil || installed {
+		return nil, err
+	}
+	return field.ErrorList{field.Invalid(monitoringPath.Child("parameters", "victoriaMetrics", "enabled"), true,
+		"the VMServiceScrape CRD (operator.victoriametrics.com) is not installed",
+	)}, nil
+}
+
+// validateImage checks that the component's image resolves.
+func validateImage(spec *corev1alpha1.ProviderSpec, in *corev1alpha1.Instance, path *field.Path, name string) field.ErrorList {
+	if componentImage(spec, in, name) != "" {
+		return nil
+	}
+	return field.ErrorList{field.Required(path.Child("image"),
+		fmt.Sprintf("the provider's catalog has no default %s image", controller.GetComponentType(spec, name)),
+	)}
+}
+
+// validateTLS rejects TLS enforcement or Galera SST encryption while TLS is disabled.
+func validateTLS(in *corev1alpha1.Instance) field.ErrorList {
+	settings, err := resolveTLSSettings(in)
+	if err != nil {
+		return field.ErrorList{field.Invalid(enginePath.Child("parameters"), field.OmitValueType{}, err.Error())}
+	}
+	if settings.Enabled {
+		return nil
+	}
+
+	path := enginePath.Child("parameters", "tls")
+	var errs field.ErrorList
+	if settings.Required {
+		errs = append(errs, field.Invalid(path.Child("required"), true, "must be false while TLS is disabled"))
+	}
+	if settings.GaleraSSTEnabled {
+		errs = append(errs, field.Invalid(path.Child("galeraSSTEnabled"), true, "must be false while TLS is disabled"))
+	}
+	return errs
+}
+
+// validatePITR checks that binary logs of a replication primary go to one storage with a physical base backup.
+func validatePITR(in *corev1alpha1.Instance) field.ErrorList {
+	backup := in.Spec.Backup
+	if backup == nil || !backup.Enabled {
+		return nil
+	}
+
+	path := field.NewPath("spec", "backup", "storages")
+	replication := normalizeTopology(in.GetTopologyType()) == definition.TopologyTypeReplication
+	var errs field.ErrorList
+	var enabled []string
+	for i := range backup.Storages {
+		storage := &backup.Storages[i]
+		if storage.PITR == nil || !storage.PITR.Enabled {
+			continue
+		}
+		enabled = append(enabled, storage.StorageRef.Name)
+		if !replication {
+			errs = append(errs, field.Forbidden(path.Index(i).Child("pitr", "enabled"),
+				"point-in-time recovery is only supported on the replication topology",
+			))
+		}
+		if _, err := firstPhysicalSchedule(storage); err != nil {
+			errs = append(errs, field.Invalid(path.Index(i).Child("schedules"), field.OmitValueType{}, err.Error()))
+		}
+	}
+	if len(enabled) > 1 {
+		errs = append(errs, field.Invalid(path, field.OmitValueType{}, fmt.Sprintf(
+			"point-in-time recovery can be enabled on at most one storage, got %d: %s",
+			len(enabled), strings.Join(enabled, ", "),
+		)))
+	}
+	return errs
+}
+
+// validateDataSource rejects a point-in-time recovery the operator would stop at the base backup.
+func validateDataSource(in *corev1alpha1.Instance) field.ErrorList {
+	ds := in.Spec.DataSource
+	if ds == nil || ds.Type != backupv1alpha1.DataSourceTypePointInTime || provisioned(in) ||
+		normalizeTopology(in.GetTopologyType()) == definition.TopologyTypeReplication {
+		return nil
+	}
+	return field.ErrorList{field.Forbidden(field.NewPath("spec", "dataSource", "pointInTime"),
+		"point-in-time recovery is only supported into the replication topology",
+	)}
+}
+
+// provisioned reports whether the Instance got past validation, so its engine may exist.
+func provisioned(in *corev1alpha1.Instance) bool {
+	return in != nil && in.Status.Phase != "" && in.Status.Phase != corev1alpha1.InstancePhasePending
+}
+
+// engineState is what an engine runs, to check an update against.
+type engineState struct {
+	topology     definition.TopologyType
+	image        string
+	size         *resource.Quantity
+	storageClass string
+	replicas     int32
+}
+
+// instanceEngineState is the engine an Instance deploys.
+func instanceEngineState(spec *corev1alpha1.ProviderSpec, in *corev1alpha1.Instance) engineState {
+	engine := in.Spec.Components[common.ComponentEngine]
+	size := engineStorageSize(engine)
+	state := engineState{
+		topology: normalizeTopology(in.GetTopologyType()),
+		image:    componentImage(spec, in, common.ComponentEngine),
+		size:     &size,
+		replicas: engineReplicas(in),
+	}
+	if engine.Storage != nil && engine.Storage.StorageClass != nil {
+		state.storageClass = *engine.Storage.StorageClass
+	}
+	return state
+}
+
+// mariaDBEngineState is the engine a MariaDB runs.
+func mariaDBEngineState(mdb *mariadbv1alpha1.MariaDB) engineState {
+	return engineState{
+		topology:     existingTopology(mdb),
+		image:        mdb.Spec.Image,
+		size:         mdb.Spec.Storage.Size,
+		storageClass: mdb.Spec.Storage.StorageClassName,
+		replicas:     mdb.Spec.Replicas,
+	}
+}
+
+// validateEngineChange rejects the engine changes the running cluster cannot apply.
+func validateEngineChange(spec *corev1alpha1.ProviderSpec, in *corev1alpha1.Instance, current engineState) field.ErrorList {
+	desired := instanceEngineState(spec, in)
+	if desired.topology != current.topology {
+		return field.ErrorList{field.Invalid(field.NewPath("spec", "topology", "type"), in.GetTopologyType(),
+			fmt.Sprintf("cannot change on an existing instance, which runs the %s topology", current.topology),
+		)}
+	}
+
+	var errs field.ErrorList
+	if from, ok := imageMinorVersion(current.image); ok {
+		if to, ok := imageMinorVersion(desired.image); ok && (to[0] < from[0] || (to[0] == from[0] && to[1] < from[1])) {
+			errs = append(errs, field.Forbidden(engineVersionPath(in), fmt.Sprintf(
+				"downgrading MariaDB from %d.%d to %d.%d is not supported; restore a backup into a new Instance instead",
+				from[0], from[1], to[0], to[1],
+			)))
+		}
+	}
+	if current.size != nil && desired.size.Cmp(*current.size) < 0 {
+		errs = append(errs, field.Invalid(enginePath.Child("storage", "size"), desired.size.String(),
+			"cannot be decreased from "+current.size.String(),
+		))
+	}
+	if current.storageClass != "" && desired.storageClass != "" && desired.storageClass != current.storageClass {
+		errs = append(errs, field.Invalid(enginePath.Child("storage", "storageClass"), desired.storageClass,
+			fmt.Sprintf("cannot change on an existing instance, which uses %q", current.storageClass),
+		))
+	}
+	if desired.topology == definition.TopologyTypeReplication && desired.replicas > current.replicas &&
+		replicaTemplateStorage(in) == nil {
+		errs = append(errs, field.Forbidden(enginePath.Child("replicas"),
+			"adding replicas needs a backup storage in spec.backup: new replicas are seeded from a physical backup staged there",
+		))
+	}
+	return errs
+}
+
+// engineVersionPath is the field that selects the engine's version.
+func engineVersionPath(in *corev1alpha1.Instance) *field.Path {
+	engine := in.Spec.Components[common.ComponentEngine]
+	switch {
+	case engine.Image != "":
+		return enginePath.Child("image")
+	case engine.Version != "":
+		return enginePath.Child("version")
+	default:
+		return field.NewPath("spec", "version")
+	}
+}
+
+// engineReplicas is the engine's node count, or its topology's default.
+func engineReplicas(in *corev1alpha1.Instance) int32 {
+	if replicas := in.Spec.Components[common.ComponentEngine].Replicas; replicas != nil {
+		return *replicas
+	}
+	return topologyDefaultReplicas(in.GetTopologyType())
+}
+
+// componentImage is the image Sync deploys for the named component once the runtime resolves its version bundle.
+func componentImage(spec *corev1alpha1.ProviderSpec, in *corev1alpha1.Instance, name string) string {
+	component := in.Spec.Components[name]
+	if component.Image != "" {
+		return component.Image
+	}
+	version := component.Version
+	if version == "" {
+		if bundle, err := controller.ResolveVersionBundle(spec, controller.EffectiveVersionBundleName(spec, in)); err == nil {
+			version = bundle.Components[name]
+		}
+	}
+	if image := controller.GetImageForVersion(spec, name, version); image != "" {
+		return image
+	}
+	return controller.GetDefaultImageForComponent(spec, name)
 }
 
 var minorVersionRegexp = regexp.MustCompile(`^(\d+)\.(\d+)`)
@@ -458,50 +433,6 @@ func imageMinorVersion(image string) ([2]int, bool) {
 	return [2]int{major, minor}, true
 }
 
-// validateStorageUpdate rejects storage changes the operator cannot apply: a
-// smaller volume (rejected by the operator, leaving the Instance stuck) and a
-// different StorageClass (silently ignored, as PVCs cannot change class). A
-// class set on an Instance provisioned with the default class is left as is.
-func validateStorageUpdate(engine corev1alpha1.ComponentSpec, existing *mariadbv1alpha1.MariaDB) error {
-	if current := existing.Spec.Storage.Size; current != nil {
-		if desired := engineStorageSize(engine); desired.Cmp(*current) < 0 {
-			return fmt.Errorf(
-				"spec.components.%s.storage.size cannot be decreased from %s to %s",
-				common.ComponentEngine, current.String(), desired.String(),
-			)
-		}
-	}
-	current := existing.Spec.Storage.StorageClassName
-	if engine.Storage == nil || engine.Storage.StorageClass == nil || current == "" {
-		return nil
-	}
-	if desired := *engine.Storage.StorageClass; desired != current {
-		return fmt.Errorf(
-			"spec.components.%s.storage.storageClass cannot be changed on an existing instance (current: %q)",
-			common.ComponentEngine, current,
-		)
-	}
-	return nil
-}
-
-// validateTopologyImmutable rejects switching an existing instance between
-// topologies. The provider has no access to the previous Instance spec at
-// admission time, so it compares against the topology of the already-provisioned
-// MariaDB CR.
-func validateTopologyImmutable(c *controller.Context, topology string) error {
-	existing := &mariadbv1alpha1.MariaDB{}
-	if err := c.Get(existing, c.Name()); err != nil {
-		if apierrors.IsNotFound(err) {
-			return nil
-		}
-		return fmt.Errorf("get MariaDB: %w", err)
-	}
-	if existingTopology(existing) != normalizeTopology(topology) {
-		return fmt.Errorf("spec.topology is immutable and cannot be changed on an existing instance")
-	}
-	return nil
-}
-
 // normalizeTopology maps an empty topology to the standalone default.
 func normalizeTopology(topology string) definition.TopologyType {
 	if topology == "" {
@@ -520,13 +451,4 @@ func existingTopology(mdb *mariadbv1alpha1.MariaDB) definition.TopologyType {
 	default:
 		return definition.TopologyTypeStandalone
 	}
-}
-
-// mustParseQuantity is a helper that panics on invalid quantity strings (compile-time constants only).
-func mustParseQuantity(s string) resource.Quantity {
-	q, err := resource.ParseQuantity(s)
-	if err != nil {
-		panic(fmt.Sprintf("invalid quantity %q: %v", s, err))
-	}
-	return q
 }

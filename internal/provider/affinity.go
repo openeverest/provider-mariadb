@@ -15,13 +15,9 @@
 package provider
 
 import (
-	"fmt"
-
 	mariadbv1alpha1 "github.com/mariadb-operator/mariadb-operator/v26/api/v1alpha1"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-
-	"github.com/openeverest/provider-mariadb/internal/common"
 )
 
 // buildAffinity returns the engine's affinity or, for HA topologies, the default
@@ -41,7 +37,7 @@ func buildAffinity(raw *corev1.Affinity, ha bool, instanceName string) *mariadbv
 //
 // The operator uses a trimmed-down affinity type that only models NodeAffinity
 // and PodAntiAffinity; PodAffinity (pod co-location) is not representable and is
-// rejected by validateAffinity before this runs. Pod (anti-)affinity terms only
+// rejected by Validate before this runs. Pod (anti-)affinity terms only
 // carry a LabelSelector and TopologyKey on the operator side, so richer term
 // fields (Namespaces, NamespaceSelector, MatchLabelKeys, ...) are not mapped.
 //
@@ -64,22 +60,6 @@ func convertAffinity(a *corev1.Affinity) *mariadbv1alpha1.AffinityConfig {
 		return nil
 	}
 	return cfg
-}
-
-// validateAffinity rejects affinity rules the operator cannot express. Only
-// PodAffinity is unsupported; NodeAffinity and PodAntiAffinity map cleanly.
-func validateAffinity(a *corev1.Affinity) error {
-	if a == nil {
-		return nil
-	}
-	if a.PodAffinity != nil {
-		return fmt.Errorf(
-			"spec.components.%s.schedulingPolicy.affinity.podAffinity is not supported by the MariaDB operator; "+
-				"only nodeAffinity and podAntiAffinity are supported",
-			common.ComponentEngine,
-		)
-	}
-	return nil
 }
 
 // mariadbPodLabels are the operator's selector labels of the MariaDB pods.

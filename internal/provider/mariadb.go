@@ -349,7 +349,7 @@ func StatusMariaDB(c *controller.Context) (controller.Status, error) {
 
 	// Check the Ready condition.
 	if mariadbCR.IsReady() {
-		proxyEnabled, err := isProxyEnabled(c)
+		proxyEnabled, err := isProxyEnabled(c.Instance())
 		if err != nil {
 			return controller.Status{}, err
 		}
@@ -407,7 +407,7 @@ func buildConnectionDetails(c *controller.Context, mxs *mariadbv1alpha1.MaxScale
 		caBundleSecretName = tlsCABundleSecretName(mxs.Name)
 		tlsEnabled = mxs.IsTLSEnabled()
 	} else {
-		tlsSettings, err := resolveTLSSettings(c)
+		tlsSettings, err := resolveTLSSettings(c.Instance())
 		if err != nil {
 			return controller.ConnectionDetails{}, fmt.Errorf("resolve TLS settings: %w", err)
 		}

@@ -1,0 +1,21 @@
+# Keeps the stored error and changes only the CPU request.
+apiVersion: core.openeverest.io/v1alpha1
+kind: Instance
+metadata:
+  name: test-mariadb-admission
+spec:
+  providerRef:
+    name: mariadb
+  components:
+    engine:
+      type: mariadb
+      replicas: 2
+      resources:
+        limits:
+          cpu: "1"
+          memory: 1G
+        requests:
+          cpu: 300m
+          memory: 512M
+      storage:
+        size: 1Gi

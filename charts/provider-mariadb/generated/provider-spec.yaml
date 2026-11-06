@@ -27,46 +27,125 @@ spec:
     engine:
       parametersSchema:
         openAPIV3Schema:
+          description: MariadbParameters defines optional per-component parameters for MariaDB engine nodes.
           properties:
             configuration:
+              description: |-
+                Configuration is additional MariaDB configuration appended to the default my.cnf.
+                `configuration` is the conventional engine-config property name across providers;
+                the content is passed verbatim to the operator's spec.myCnf field.
               type: string
             tls:
+              description: |-
+                TLS configures transport encryption for MariaDB. TLS is enabled by
+                default when this block or its enabled field is omitted.
               properties:
                 enabled:
-                  type: boolean
+                  description: Enabled controls certificate issuance and TLS support. Defaults to true.
+                  enum:
+                    - true
+                    - false
+                    - "true"
+                    - "false"
                 galeraSSTEnabled:
-                  type: boolean
+                  description: |-
+                    GaleraSSTEnabled encrypts Galera state snapshot transfers. It defaults to
+                    true for Galera instances and is not valid for standalone instances.
+                  enum:
+                    - true
+                    - false
+                    - "true"
+                    - "false"
                 required:
-                  type: boolean
+                  description: |-
+                    Required rejects unencrypted client connections. Defaults to false so
+                    existing username/password clients can migrate to TLS without disruption.
+                  enum:
+                    - true
+                    - false
+                    - "true"
+                    - "false"
               type: object
           type: object
       type: mariadb
     monitoring:
       parametersSchema:
         openAPIV3Schema:
+          description: |-
+            MonitoringParameters defines parameters for the monitoring component.
+
+            The monitoring component maps onto the mariadb-operator's spec.metrics: it
+            deploys a mysqld-exporter and makes it discoverable by a Prometheus Operator
+            stack (ServiceMonitor) and/or a VictoriaMetrics operator stack
+            (VMServiceScrape). Metrics are opt-in and default to off.
           properties:
             enabled:
-              type: boolean
+              description: |-
+                Enabled turns on the MariaDB metrics exporter (mysqld-exporter). When
+                false or unset, no exporter is deployed and no scrape objects are
+                created. Defaults to false.
+              enum:
+                - true
+                - false
+                - "true"
+                - "false"
             serviceMonitor:
+              description: |-
+                ServiceMonitor controls the creation of a Prometheus Operator
+                ServiceMonitor object that scrapes the exporter. Creating it requires the
+                ServiceMonitor CRD (monitoring.coreos.com) to be installed in the cluster.
               properties:
                 enabled:
-                  type: boolean
+                  description: |-
+                    Enabled controls whether a Prometheus ServiceMonitor is created for the
+                    exporter. Defaults to true while metrics are enabled, unless
+                    VictoriaMetrics is enabled, so the exporter is scraped once. When false,
+                    the ServiceMonitor CRD is not required and an existing ServiceMonitor is
+                    deleted.
+                  enum:
+                    - true
+                    - false
+                    - "true"
+                    - "false"
                 interval:
+                  description: Interval at which Prometheus scrapes the exporter (e.g. "10s").
                   type: string
                 jobLabel:
+                  description: JobLabel is the label to use as the Prometheus job name for the target.
                   type: string
                 prometheusRelease:
+                  description: |-
+                    PrometheusRelease is the value of the `release` label added to the
+                    ServiceMonitor so a Prometheus instance selecting on it picks the target up.
                   type: string
                 scrapeTimeout:
+                  description: ScrapeTimeout is the timeout for a single scrape (e.g. "10s").
                   type: string
               type: object
             victoriaMetrics:
+              description: |-
+                VictoriaMetrics controls the creation of a VictoriaMetrics operator
+                VMServiceScrape object that scrapes the exporter.
               properties:
                 enabled:
-                  type: boolean
+                  description: |-
+                    Enabled controls whether a VMServiceScrape is created for the exporter.
+                    Requires metrics to be enabled. It also turns the ServiceMonitor off
+                    unless serviceMonitor.enabled is set explicitly. Defaults to false.
+                  enum:
+                    - true
+                    - false
+                    - "true"
+                    - "false"
                 interval:
+                  description: |-
+                    Interval at which the exporter is scraped (e.g. "30s"). Defaults to the
+                    ServiceMonitor interval, or the VMAgent default when unset.
                   type: string
                 scrapeTimeout:
+                  description: |-
+                    ScrapeTimeout is the timeout for a single scrape (e.g. "10s"). Defaults
+                    to the ServiceMonitor scrape timeout, or the VMAgent default when unset.
                   type: string
               type: object
           type: object
@@ -74,9 +153,23 @@ spec:
     proxy:
       parametersSchema:
         openAPIV3Schema:
+          description: |-
+            MaxScaleParameters defines parameters for the proxy component.
+
+            The proxy component deploys MariaDB MaxScale in front of a Galera or
+            replication cluster. MaxScale routes writes to the primary and balances reads
+            across replicas; primary failover stays with the mariadb-operator.
+            Client connection details point at MaxScale while it is enabled.
           properties:
             enabled:
-              type: boolean
+              description: |-
+                Enabled deploys MaxScale in front of the cluster. Only supported on the
+                galera and replication topologies. Defaults to false.
+              enum:
+                - true
+                - false
+                - "true"
+                - "false"
           type: object
       type: maxscale
   defaultVersion: "12.3"
@@ -121,6 +214,10 @@ spec:
                 service: {}
       parametersSchema:
         openAPIV3Schema:
+          description: |-
+            GaleraTopologyParameters holds topology-level parameters for the Galera topology.
+            Currently empty — the topology has no parameters beyond the standard component
+            spec. Add fields here when topology-level configuration is needed.
           type: object
     replication:
       components:
@@ -160,6 +257,10 @@ spec:
                 service: {}
       parametersSchema:
         openAPIV3Schema:
+          description: |-
+            ReplicationTopologyParameters holds topology-level parameters for the replication topology.
+            Currently empty — the topology has no parameters beyond the standard component
+            spec. Add fields here when topology-level configuration is needed.
           type: object
     standalone:
       components:
@@ -217,7 +318,7 @@ spec:
                 policy:
                   uiType: widget
                   widgetType: podSchedulingPolicy
-              groupType: toggleable
+              groupType: bordered
               label: Pod scheduling policy
               uiType: group
             storageClass:
@@ -463,7 +564,7 @@ spec:
                 policy:
                   uiType: widget
                   widgetType: podSchedulingPolicy
-              groupType: toggleable
+              groupType: bordered
               label: Pod scheduling policy
               uiType: group
             storageClass:
@@ -698,7 +799,7 @@ spec:
                 policy:
                   uiType: widget
                   widgetType: podSchedulingPolicy
-              groupType: toggleable
+              groupType: bordered
               label: Pod scheduling policy
               uiType: group
             storageClass:

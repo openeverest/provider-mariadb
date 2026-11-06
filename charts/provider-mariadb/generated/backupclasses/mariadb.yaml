@@ -17,18 +17,54 @@ spec:
   executionMode: ProviderManaged
   parametersSchema:
     openAPIV3Schema:
+      description: |-
+        MariadbBackupParameters describes the parameters accepted by Backup CRs and
+        InstanceBackupSchedules that target this class (spec.parameters). The Type
+        field selects between logical (mariadb-dump) and physical (mariadb-backup)
+        backups, and the provider creates the corresponding mariadb-operator CR
+        (Backup or PhysicalBackup). Fields that only apply to one type are ignored
+        for the other.
       properties:
         compression:
+          description: |-
+            Compression selects the algorithm used to compress the backup. Applies to
+            both types. Defaults to none.
+          enum:
+            - none
+            - bzip2
+            - gzip
           type: string
         databases:
+          description: |-
+            Databases restricts a logical backup to the named databases. When empty,
+            all databases are backed up. Logical backups only.
           items:
             type: string
           type: array
         ignoreGlobalPriv:
+          description: |-
+            IgnoreGlobalPriv excludes the mysql.global_priv table from a logical dump.
+            When unset the operator defaults it to true for Galera and false
+            otherwise. Logical backups only.
           type: boolean
         target:
+          description: |-
+            Target selects the Pod a physical backup is taken from: "Replica" only
+            uses a ready replica; "PreferReplica" falls back to the primary when no
+            ready replica is available. Defaults to "PreferReplica" so single-node
+            instances still take the backup from the primary. Physical backups only.
+          enum:
+            - Replica
+            - PreferReplica
           type: string
         type:
+          description: |-
+            Type selects the backup strategy: "logical" (mariadb-dump, a SQL dump) or
+            "physical" (mariadb-backup, a data directory snapshot). Defaults to
+            "logical" when empty.
+          enum:
+            - logical
+            - physical
           type: string
       type: object
   providerManaged:
@@ -37,6 +73,11 @@ spec:
     supportsPITR: true
   restoreParametersSchema:
     openAPIV3Schema:
+      description: |-
+        MariadbRestoreParameters describes the parameters accepted by Restore CRs
+        that target this class (spec.parameters). Restores expose no restore-time
+        options yet; the struct is intentionally empty and ships an empty schema
+        until requirements crystallize.
       type: object
   supportedProviders:
     - mariadb

@@ -23,6 +23,7 @@ import (
 	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/utils/ptr"
+	"sigs.k8s.io/controller-runtime/pkg/client"
 
 	corev1alpha1 "github.com/openeverest/openeverest/v2/api/core/v1alpha1"
 
@@ -75,7 +76,7 @@ func existingEngineMariaDB(image, size, class string) *mariadbv1alpha1.MariaDB {
 	}
 }
 
-func TestValidateEngineUpdate(t *testing.T) {
+func TestValidateReferences_EngineUpdate(t *testing.T) {
 	sized := func(size string, class *string) *corev1alpha1.Storage {
 		return &corev1alpha1.Storage{Size: resource.MustParse(size), StorageClass: class}
 	}
@@ -115,13 +116,13 @@ func TestValidateEngineUpdate(t *testing.T) {
 			name:     "storage shrink is rejected",
 			instance: engineUpdateInstance("mariadb:12.3", sized("5Gi", nil)),
 			existing: existingEngineMariaDB("mariadb:12.3", "10Gi", ""),
-			wantErr:  "cannot be decreased from 10Gi to 5Gi",
+			wantErr:  `storage.size: Invalid value: "5Gi": cannot be decreased from 10Gi`,
 		},
 		{
 			name:     "omitted size shrinking to the default is rejected",
 			instance: engineUpdateInstance("mariadb:12.3", nil),
 			existing: existingEngineMariaDB("mariadb:12.3", "20Gi", ""),
-			wantErr:  "cannot be decreased from 20Gi to 10Gi",
+			wantErr:  `storage.size: Invalid value: "10Gi": cannot be decreased from 20Gi`,
 		},
 		{
 			name:     "storage expansion is allowed",
@@ -132,7 +133,7 @@ func TestValidateEngineUpdate(t *testing.T) {
 			name:     "storage class change is rejected",
 			instance: engineUpdateInstance("mariadb:12.3", sized("10Gi", ptr.To("fast"))),
 			existing: existingEngineMariaDB("mariadb:12.3", "10Gi", "standard"),
-			wantErr:  `cannot be changed on an existing instance (current: "standard")`,
+			wantErr:  `storage.storageClass: Invalid value: "fast": cannot change on an existing instance, which uses "standard"`,
 		},
 		{
 			name:     "same storage class is allowed",
@@ -147,17 +148,18 @@ func TestValidateEngineUpdate(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			c := newContextForInstance(t, tt.instance)
+			objs := []client.Object{versionCatalogProvider()}
 			if tt.existing != nil {
-				c = newContextForInstance(t, tt.instance, tt.existing)
+				objs = append(objs, tt.existing)
 			}
-			err := validateEngineUpdate(c)
+			errs, err := New().ValidateReferences(newContextForInstance(t, tt.instance, objs...))
+			require.NoError(t, err)
 			if tt.wantErr == "" {
-				assert.NoError(t, err)
+				assert.Empty(t, errs)
 				return
 			}
-			require.Error(t, err)
-			assert.Contains(t, err.Error(), tt.wantErr)
+			require.Len(t, errs, 1)
+			assert.Contains(t, errs[0].Error(), tt.wantErr)
 		})
 	}
 }
@@ -187,9 +189,9 @@ func versionCatalogProvider() *corev1alpha1.Provider {
 	}
 }
 
-// The runtime resolves version bundles before Sync but not before admission,
-// so validation must resolve them itself.
-func TestValidateEngineUpdateVersionBundles(t *testing.T) {
+// The runtime resolves version bundles before Sync but not before
+// ValidateReferences, so the check must resolve them itself.
+func TestValidateReferences_VersionBundles(t *testing.T) {
 	tests := []struct {
 		name          string
 		version       string
@@ -207,8 +209,9 @@ func TestValidateEngineUpdateVersionBundles(t *testing.T) {
 			in.Status.Version = tt.statusVersion
 			c := newContextForInstance(t, in, versionCatalogProvider(),
 				existingEngineMariaDB("mariadb:12.3", "10Gi", ""))
-			err := validateEngineUpdate(c)
-			assert.Equal(t, tt.wantErr, err != nil, "err = %v", err)
+			errs, err := New().ValidateReferences(c)
+			require.NoError(t, err)
+			assert.Equal(t, tt.wantErr, len(errs) > 0, "errs = %v", errs)
 		})
 	}
 }

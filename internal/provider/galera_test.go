@@ -108,58 +108,7 @@ func TestDefaultHAAffinity(t *testing.T) {
 	}
 }
 
-func TestValidateTopology_Unsupported(t *testing.T) {
-	c := newTopologyContext(t, "sharded", nil)
-	if err := validateTopology(c); err == nil {
-		t.Fatal("expected error for unsupported topology")
-	}
-}
-
-func TestValidateTopology_GaleraReplicas(t *testing.T) {
-	tests := []struct {
-		name     string
-		replicas *int32
-		wantErr  bool
-	}{
-		{name: "default (unset) is 3", replicas: nil, wantErr: false},
-		{name: "odd >= 3 ok", replicas: ptr.To(int32(5)), wantErr: false},
-		{name: "too few", replicas: ptr.To(int32(1)), wantErr: true},
-		{name: "even rejected", replicas: ptr.To(int32(4)), wantErr: true},
-	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			c := newTopologyContext(t, "galera", tt.replicas)
-			err := validateTopology(c)
-			if (err != nil) != tt.wantErr {
-				t.Fatalf("validateTopology() error = %v, wantErr %v", err, tt.wantErr)
-			}
-		})
-	}
-}
-
-func TestValidateTopology_StandaloneReplicas(t *testing.T) {
-	tests := []struct {
-		name     string
-		replicas *int32
-		wantErr  bool
-	}{
-		{name: "default (unset) is 1", replicas: nil, wantErr: false},
-		{name: "single node ok", replicas: ptr.To(int32(1)), wantErr: false},
-		{name: "two nodes rejected", replicas: ptr.To(int32(2)), wantErr: true},
-		{name: "three nodes rejected", replicas: ptr.To(int32(3)), wantErr: true},
-	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			c := newTopologyContext(t, "standalone", tt.replicas)
-			err := validateTopology(c)
-			if (err != nil) != tt.wantErr {
-				t.Fatalf("validateTopology() error = %v, wantErr %v", err, tt.wantErr)
-			}
-		})
-	}
-}
-
-func TestValidateTopology_Immutable(t *testing.T) {
+func TestValidateReferences_TopologyImmutable(t *testing.T) {
 	tests := []struct {
 		name     string
 		topology string
@@ -174,20 +123,20 @@ func TestValidateTopology_Immutable(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			galera := tt.topology == "galera"
 			replicas := ptr.To(int32(1))
-			if galera {
+			if tt.topology == "galera" {
 				replicas = ptr.To(int32(3))
 			}
-			var c *controller.Context
+			objs := []client.Object{versionCatalogProvider()}
 			if tt.existing != nil {
-				c = newTopologyContext(t, tt.topology, replicas, tt.existing)
-			} else {
-				c = newTopologyContext(t, tt.topology, replicas)
+				objs = append(objs, tt.existing)
 			}
-			err := validateTopology(c)
-			if (err != nil) != tt.wantErr {
-				t.Fatalf("validateTopology() error = %v, wantErr %v", err, tt.wantErr)
+			errs, err := New().ValidateReferences(newTopologyContext(t, tt.topology, replicas, objs...))
+			if err != nil {
+				t.Fatalf("ValidateReferences() error = %v", err)
+			}
+			if (len(errs) > 0) != tt.wantErr {
+				t.Fatalf("ValidateReferences() errs = %v, wantErr %v", errs, tt.wantErr)
 			}
 		})
 	}

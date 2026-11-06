@@ -20,8 +20,6 @@ import (
 	mariadbv1alpha1 "github.com/mariadb-operator/mariadb-operator/v26/api/v1alpha1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/utils/ptr"
-
-	"github.com/openeverest/openeverest/v2/provider-runtime/controller"
 )
 
 func TestIsHATopology(t *testing.T) {
@@ -43,29 +41,7 @@ func TestIsHATopology(t *testing.T) {
 	}
 }
 
-func TestValidateTopology_ReplicationReplicas(t *testing.T) {
-	tests := []struct {
-		name     string
-		replicas *int32
-		wantErr  bool
-	}{
-		{name: "default (unset) is 3", replicas: nil, wantErr: false},
-		{name: "two nodes ok", replicas: ptr.To(int32(2)), wantErr: false},
-		{name: "even count ok", replicas: ptr.To(int32(4)), wantErr: false},
-		{name: "single node rejected", replicas: ptr.To(int32(1)), wantErr: true},
-	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			c := newTopologyContext(t, "replication", tt.replicas)
-			err := validateTopology(c)
-			if (err != nil) != tt.wantErr {
-				t.Fatalf("validateTopology() error = %v, wantErr %v", err, tt.wantErr)
-			}
-		})
-	}
-}
-
-func TestValidateTopology_ReplicationImmutable(t *testing.T) {
+func TestValidateReferences_ReplicationTopologyImmutable(t *testing.T) {
 	replicationMariaDB := func() *mariadbv1alpha1.MariaDB {
 		return &mariadbv1alpha1.MariaDB{
 			ObjectMeta: metav1.ObjectMeta{Name: "test", Namespace: "default"},
@@ -88,16 +64,13 @@ func TestValidateTopology_ReplicationImmutable(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			replicas := ptr.To(int32(3))
-			var c *controller.Context
-			if tt.existing != nil {
-				c = newTopologyContext(t, tt.topology, replicas, tt.existing)
-			} else {
-				c = newTopologyContext(t, tt.topology, replicas)
+			c := newTopologyContext(t, tt.topology, ptr.To(int32(3)), versionCatalogProvider(), tt.existing)
+			errs, err := New().ValidateReferences(c)
+			if err != nil {
+				t.Fatalf("ValidateReferences() error = %v", err)
 			}
-			err := validateTopology(c)
-			if (err != nil) != tt.wantErr {
-				t.Fatalf("validateTopology() error = %v, wantErr %v", err, tt.wantErr)
+			if (len(errs) > 0) != tt.wantErr {
+				t.Fatalf("ValidateReferences() errs = %v, wantErr %v", errs, tt.wantErr)
 			}
 		})
 	}
