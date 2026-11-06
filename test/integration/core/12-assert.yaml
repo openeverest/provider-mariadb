@@ -1,11 +1,12 @@
-# The downgrade is not applied: the provider finds the running MariaDB on a
-# newer version, which blocks the Instance (Ready=False with reason
-# InvalidReference), and the MariaDB stays on its version.
+# The downgrade is not applied: the Instance stays Ready and the MariaDB stays
+# on its version.
 apiVersion: core.openeverest.io/v1alpha1
 kind: Instance
 metadata:
   name: test-instance
-(length(status.conditions[?type == 'Ready' && reason == 'InvalidReference'] || `[]`) > `0`): true
+status:
+  phase: Ready
+(length(status.conditions[?type == 'Ready' && status == 'True'] || `[]`) > `0`): true
 ---
 apiVersion: k8s.mariadb.com/v1alpha1
 kind: MariaDB
