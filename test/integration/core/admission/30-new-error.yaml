@@ -1,0 +1,21 @@
+# Keeps the stored error and adds one: storage below the 1Gi minimum.
+apiVersion: core.openeverest.io/v1alpha1
+kind: Instance
+metadata:
+  name: test-mariadb-admission
+spec:
+  providerRef:
+    name: mariadb
+  components:
+    engine:
+      type: mariadb
+      replicas: 2
+      resources:
+        limits:
+          cpu: "1"
+          memory: 1G
+        requests:
+          cpu: 250m
+          memory: 512M
+      storage:
+        size: 512Mi

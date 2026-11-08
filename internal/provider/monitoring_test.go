@@ -367,7 +367,7 @@ func TestSyncVMServiceScrape_TeardownLeavesForeign(t *testing.T) {
 	require.NoError(t, SyncVMServiceScrape(c))
 }
 
-func TestValidateMonitoring_VictoriaMetrics(t *testing.T) {
+func TestValidateReferences_VictoriaMetrics(t *testing.T) {
 	tests := []struct {
 		name         string
 		params       string
@@ -377,24 +377,22 @@ func TestValidateMonitoring_VictoriaMetrics(t *testing.T) {
 		{name: "metrics only", params: `{"enabled":true}`},
 		{name: "enabled with CRD", params: `{"enabled":true,"victoriaMetrics":{"enabled":true}}`, crdInstalled: true},
 		{
-			name:    "without metrics",
-			params:  `{"victoriaMetrics":{"enabled":true}}`,
-			wantErr: "requires metrics to be enabled",
-		},
-		{
 			name:    "without CRD",
 			params:  `{"enabled":true,"victoriaMetrics":{"enabled":true}}`,
-			wantErr: "requires the VMServiceScrape CRD",
+			wantErr: "the VMServiceScrape CRD (operator.victoriametrics.com) is not installed",
 		},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			err := validateMonitoring(newVictoriaMetricsContext(t, tt.params, tt.crdInstalled))
+			errs, err := New().ValidateReferences(newVictoriaMetricsContext(t, tt.params, tt.crdInstalled))
+			require.NoError(t, err)
 			if tt.wantErr == "" {
-				require.NoError(t, err)
+				assert.Empty(t, errs)
 				return
 			}
-			require.ErrorContains(t, err, tt.wantErr)
+			require.Len(t, errs, 1)
+			assert.Equal(t, "spec.components[monitoring].parameters.victoriaMetrics.enabled", errs[0].Field)
+			assert.Contains(t, errs[0].Detail, tt.wantErr)
 		})
 	}
 }

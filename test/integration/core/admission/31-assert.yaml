@@ -1,0 +1,14 @@
+apiVersion: core.openeverest.io/v1alpha1
+kind: Instance
+metadata:
+  name: test-mariadb-admission
+spec:
+  components:
+    engine:
+      resources:
+        requests:
+          cpu: 300m
+status:
+  (conditions[?type == 'Ready']):
+    - status: "False"
+      reason: ValidationFailed

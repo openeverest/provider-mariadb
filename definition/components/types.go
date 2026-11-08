@@ -11,6 +11,9 @@ import "fmt"
 // FlexBool is a boolean that also decodes from the JSON strings "true"/"false".
 // The OpenEverest UI renders boolean toggles as string-valued `select` widgets,
 // so a value can arrive as either a JSON bool (API/preset) or a quoted string (UI).
+//
+// +kubebuilder:validation:Type=""
+// +kubebuilder:validation:Enum=true;false;"true";"false"
 type FlexBool bool
 
 // UnmarshalJSON accepts a JSON bool or the quoted strings "true"/"false".

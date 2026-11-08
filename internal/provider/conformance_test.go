@@ -15,7 +15,14 @@
 package provider
 
 import (
+	"encoding/json"
+	"os"
+	"path/filepath"
+	"reflect"
 	"testing"
+
+	"github.com/stretchr/testify/require"
+	"k8s.io/apimachinery/pkg/util/yaml"
 
 	"github.com/openeverest/openeverest/v2/provider-runtime/conformance"
 )
@@ -31,9 +38,48 @@ var gatedPaths = map[string]string{
 
 func TestUISchemaIsReconciled(t *testing.T) {
 	conformance.UISchemaIsReconciled(t, conformance.Config{
-		Provider:     New(),
-		Unverifiable: gatedPaths,
+		Provider:         New(),
+		ProviderSpecPath: typedFlexBoolSpec(t),
+		Unverifiable:     gatedPaths,
 	})
+}
+
+// typedFlexBoolSpec writes the generated Provider CR with its FlexBool
+// parameters typed as booleans, since the probes only generate typed values.
+func typedFlexBoolSpec(t *testing.T) string {
+	t.Helper()
+	raw, err := os.ReadFile(providerSpecPath)
+	require.NoError(t, err)
+	data, err := yaml.ToJSON(raw)
+	require.NoError(t, err)
+	var doc map[string]any
+	require.NoError(t, json.Unmarshal(data, &doc))
+
+	flexBool := []any{true, false, "true", "false"}
+	var typeFlexBools func(node any)
+	typeFlexBools = func(node any) {
+		switch n := node.(type) {
+		case map[string]any:
+			if _, typed := n["type"]; !typed && reflect.DeepEqual(n["enum"], flexBool) {
+				n["type"] = "boolean"
+				delete(n, "enum")
+			}
+			for _, child := range n {
+				typeFlexBools(child)
+			}
+		case []any:
+			for _, child := range n {
+				typeFlexBools(child)
+			}
+		}
+	}
+	typeFlexBools(doc)
+
+	data, err = json.Marshal(doc)
+	require.NoError(t, err)
+	path := filepath.Join(t.TempDir(), "provider-spec.json")
+	require.NoError(t, os.WriteFile(path, data, 0o600))
+	return path
 }
 
 func TestSupportedFieldsAreReconciled(t *testing.T) {

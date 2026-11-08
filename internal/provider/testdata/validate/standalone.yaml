@@ -1,0 +1,14 @@
+apiVersion: core.openeverest.io/v1alpha1
+kind: Instance
+metadata:
+  name: orders
+spec:
+  providerRef:
+    name: mariadb
+  topology:
+    type: standalone
+  components:
+    engine:
+      replicas: 1
+      storage:
+        size: 10Gi

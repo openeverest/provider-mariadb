@@ -1,0 +1,27 @@
+apiVersion: core.openeverest.io/v1alpha1
+kind: Instance
+metadata:
+  name: test-mariadb-admission
+spec:
+  providerRef:
+    name: mariadb
+  components:
+    engine:
+      type: mariadb
+      replicas: 1
+      resources:
+        limits:
+          cpu: "1"
+          memory: 1G
+        requests:
+          cpu: 300m
+          memory: 512M
+      storage:
+        size: 1Gi
+  backup:
+    enabled: true
+    classRef:
+      name: test-admission-other-provider
+    storages:
+      - storageRef:
+          name: test-admission-s3

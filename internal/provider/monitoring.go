@@ -16,6 +16,8 @@ package provider
 
 import (
 	"cmp"
+	"encoding/json"
+	"errors"
 	"fmt"
 	"slices"
 
@@ -30,6 +32,7 @@ import (
 	"k8s.io/utils/ptr"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
+	corev1alpha1 "github.com/openeverest/openeverest/v2/api/core/v1alpha1"
 	"github.com/openeverest/openeverest/v2/provider-runtime/controller"
 
 	"github.com/openeverest/provider-mariadb/definition/components"
@@ -57,14 +60,17 @@ var serviceMonitorGVK = monitoringv1.SchemeGroupVersion.WithKind(monitoringv1.Se
 // monitoringParams decodes the monitoring component parameters from the
 // Instance. It returns nil when the monitoring component is absent, making
 // monitoring opt-in.
-func monitoringParams(c *controller.Context) (*components.MonitoringParameters, error) {
-	monitoring, ok := c.Instance().Spec.Components[common.ComponentMonitoring]
+func monitoringParams(in *corev1alpha1.Instance) (*components.MonitoringParameters, error) {
+	monitoring, ok := in.Spec.Components[common.ComponentMonitoring]
 	if !ok {
 		return nil, nil
 	}
+	if monitoring.Parameters == nil || monitoring.Parameters.Raw == nil {
+		return nil, errors.New("monitoring parameters not set")
+	}
 
 	var params components.MonitoringParameters
-	if err := c.DecodeComponentParameters(monitoring, &params); err != nil {
+	if err := json.Unmarshal(monitoring.Parameters.Raw, &params); err != nil {
 		return nil, fmt.Errorf("decode monitoring parameters: %w", err)
 	}
 	return &params, nil
@@ -74,7 +80,7 @@ func monitoringParams(c *controller.Context) (*components.MonitoringParameters, 
 // spec.metrics. It returns nil when metrics are not enabled, so the operator
 // deploys no exporter and creates no Prometheus objects.
 func buildMetrics(c *controller.Context) (*mariadbv1alpha1.MariadbMetrics, error) {
-	params, err := monitoringParams(c)
+	params, err := monitoringParams(c.Instance())
 	if err != nil {
 		return nil, err
 	}
@@ -159,7 +165,7 @@ func isServiceMonitorEnabled(params *components.MonitoringParameters) bool {
 // enabled but the ServiceMonitor is not. The mariadb-operator stops reconciling
 // it once spec.metrics.serviceMonitor.enabled is false, but does not delete it.
 func SyncServiceMonitor(c *controller.Context) error {
-	params, err := monitoringParams(c)
+	params, err := monitoringParams(c.Instance())
 	if err != nil {
 		return err
 	}
@@ -217,7 +223,7 @@ func newVMServiceScrape() *unstructured.Unstructured {
 // converted one and the ignore annotation stops further conversions, so the
 // exporter is scraped once.
 func SyncVMServiceScrape(c *controller.Context) error {
-	params, err := monitoringParams(c)
+	params, err := monitoringParams(c.Instance())
 	if err != nil {
 		return err
 	}
