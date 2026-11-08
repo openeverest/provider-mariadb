@@ -28,6 +28,7 @@ import (
 
 	"github.com/openeverest/openeverest/v2/provider-runtime/controller"
 
+	"github.com/openeverest/provider-mariadb/definition/backupclasses"
 	"github.com/openeverest/provider-mariadb/internal/common"
 )
 
@@ -48,7 +49,7 @@ type MariaDBProvider struct {
 
 // New creates a new MariaDBProvider instance.
 func New() *MariaDBProvider {
-	return &MariaDBProvider{
+	p := &MariaDBProvider{
 		BaseProvider: controller.BaseProvider{
 			ProviderName: common.ProviderName,
 			SchemeFuncs: []func(*runtime.Scheme) error{
@@ -69,6 +70,9 @@ func New() *MariaDBProvider {
 			},
 		},
 	}
+	p.SetShippedBackupClasses(backupclasses.Shipped())
+
+	return p
 }
 
 // Sync ensures the MariaDB CR exists and reflects the current Instance spec.

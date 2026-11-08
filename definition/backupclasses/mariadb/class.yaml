@@ -1,11 +1,14 @@
 # MariaDB BackupClass definition.
 # This file is the source of truth for the generated BackupClass manifest.
 #
+# provider-sdk generate makes the class ProviderManaged and names this
+# provider in providerManaged.providerRef: the provider claims and executes it.
+#
 # Fields:
 #   displayName/description: human-readable metadata.
-#   supportedProviders: providers this class can be used with.
-#   executionMode: "ProviderManaged" (operator-native) or "Job".
-#   backupStorageClasses: BackupStorageClasses the engine writes to, with their auth modes.
+#   backupStorageClasses: BackupStorageClasses the engine writes to, with their
+#     auth modes, the parameters it supports (parametersSchema narrows the
+#     storage class's schema) and the spec.tls settings it honours (tls).
 #   providerManaged.supportsPITR: advertise PITR capability to Restore validation.
 #   providerManaged.limits: caps the runtime enforces against Instance.spec.backup.
 #     maxStorages, maxPITREnabledStorages, maxSchedulesPerStorage — unset means unlimited.
@@ -24,13 +27,15 @@ description: |
   takes a mariadb-backup data-directory snapshot (restored by seeding a new
   Instance from spec.dataSource; in-place restore is not supported by the engine
   for physical backups).
-supportedProviders:
-  - mariadb
-executionMode: ProviderManaged
 backupStorageClasses:
   - name: s3
     authModes:
       - AccessKey
+    tls:
+      # The operator takes a CA bundle (tls.caSecretKeyRef on its S3 spec) but
+      # cannot skip certificate verification.
+      customCA: Supported
+      insecureSkipVerify: None
 
 providerManaged:
   supportsPITR: true

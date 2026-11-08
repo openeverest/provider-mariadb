@@ -28,9 +28,10 @@ import (
 	backupv1alpha1 "github.com/openeverest/openeverest/v2/api/backup/v1alpha1"
 	apicommon "github.com/openeverest/openeverest/v2/api/common/v1alpha1"
 	corev1alpha1 "github.com/openeverest/openeverest/v2/api/core/v1alpha1"
-	"github.com/openeverest/openeverest/v2/pkg/backupstorageclasses"
+	s3class "github.com/openeverest/openeverest/v2/backupstorageclasses/s3"
 	"github.com/openeverest/openeverest/v2/provider-runtime/controller"
 
+	"github.com/openeverest/provider-mariadb/definition/backupclasses"
 	mariadbbackup "github.com/openeverest/provider-mariadb/definition/backupclasses/mariadb"
 )
 
@@ -39,6 +40,10 @@ const (
 	backupTypeLogical = "logical"
 	// backupTypePhysical selects a physical (mariadb-backup) backup.
 	backupTypePhysical = "physical"
+
+	// backupClassName is the BackupClass the provider ships, defined in
+	// definition/backupclasses.
+	backupClassName = "mariadb"
 )
 
 // parseBackupParams decodes structured backup parameters (from a Backup CR or a
@@ -84,7 +89,7 @@ func operatorS3(c *controller.Context, bs *backupv1alpha1.BackupStorage, prefix 
 		return nil, err
 	}
 	// The operator can add a CA bundle but cannot skip certificate verification.
-	tls, err := c.BackupStorageTLS(bs, controller.TLSSupport{CustomCA: true})
+	tls, err := c.BackupStorageTLS(bs, backupclasses.TLSSupport(backupClassName, s3class.ClassName))
 	if err != nil {
 		return nil, err
 	}
@@ -97,11 +102,11 @@ func operatorS3(c *controller.Context, bs *backupv1alpha1.BackupStorage, prefix 
 		Prefix:   prefix,
 		AccessKeyIdSecretKeyRef: &mariadbv1alpha1.SecretKeySelector{
 			LocalObjectReference: mariadbv1alpha1.LocalObjectReference{Name: credentialsSecret},
-			Key:                  backupstorageclasses.KeyAWSAccessKeyID,
+			Key:                  s3class.KeyAWSAccessKeyID,
 		},
 		SecretAccessKeySecretKeyRef: &mariadbv1alpha1.SecretKeySelector{
 			LocalObjectReference: mariadbv1alpha1.LocalObjectReference{Name: credentialsSecret},
-			Key:                  backupstorageclasses.KeyAWSSecretAccessKey,
+			Key:                  s3class.KeyAWSSecretAccessKey,
 		},
 		TLS: &mariadbv1alpha1.TLSConfig{Enabled: endpoint.Secure},
 	}
@@ -169,7 +174,7 @@ func backupS3(c *controller.Context, backup *backupv1alpha1.Backup) (*mariadbv1a
 				return nil, fmt.Errorf("get origin Instance %q: %w", ref.Name, err)
 			}
 		}
-		location = backupstorageclasses.BackupPath(bs.Spec.Location, origin.Namespace, origin.Name, origin.UID, name)
+		location = backupv1alpha1.BackupPath(bs.Spec.Location, origin.Namespace, origin.Name, origin.UID, name)
 	}
 	s3, err := operatorS3(c, bs, location)
 	if err != nil {
