@@ -28,3 +28,10 @@ metadata:
 # The runtime writes connection details here; a non-empty password proves the
 # initial-user credentials were generated.
 (base64_decode(data.password) != ''): true
+# The admin connection (root, directly to MariaDB) is published next to the
+# application user's.
+(base64_decode(data."admin-username") == 'root'): true
+(base64_decode(data."admin-password") != ''): true
+(base64_decode(data."admin-tls") == 'true'): true
+(base64_decode(data."admin-ca.crt") != ''): true
+(base64_decode(data."admin-skip-replica-start") == 'true'): true

@@ -35,6 +35,8 @@ metadata:
 (contains(base64_decode(data.host), 'test-replication-primary')): true
 (base64_decode(data.tls) == 'true'): true
 (base64_decode(data."ca.crt") != ''): true
+# Replicas need their replication started on boot: no skip-slave-start.
+(data."admin-skip-replica-start" == null): true
 ---
 # The primary Service the provider maps exposure and connection details to.
 apiVersion: v1

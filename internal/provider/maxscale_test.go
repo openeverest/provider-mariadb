@@ -192,28 +192,41 @@ func TestSyncMaxScale_MonitorParamsOnlyForReplication(t *testing.T) {
 }
 
 func TestBuildConnectionDetails_ThroughMaxScale(t *testing.T) {
-	credentials := &corev1.Secret{
-		ObjectMeta: metav1.ObjectMeta{Name: userSecretName("test"), Namespace: "default"},
-		Data:       map[string][]byte{userPasswordSecretKey: []byte("password")},
-	}
 	mxsCABundle := &corev1.Secret{
 		ObjectMeta: metav1.ObjectMeta{Name: "test-maxscale-ca-bundle", Namespace: "default"},
 		Data:       map[string][]byte{tlsCAKey: []byte("maxscale-ca")},
 	}
-	c := newProxyContext(t, "galera", "", `{"enabled":true}`, credentials, mxsCABundle)
+	mariadbCABundle := &corev1.Secret{
+		ObjectMeta: metav1.ObjectMeta{Name: tlsCABundleSecretName("test"), Namespace: "default"},
+		Data:       map[string][]byte{tlsCAKey: []byte("mariadb-ca")},
+	}
+	c := newProxyContext(t, "galera", "", `{"enabled":true}`, append(connectionSecrets("test"), mxsCABundle, mariadbCABundle)...)
 
 	mxs := &mariadbv1alpha1.MaxScale{ObjectMeta: metav1.ObjectMeta{Name: "test-maxscale", Namespace: "default"}}
 	details, err := buildConnectionDetails(c, mxs)
 	require.NoError(t, err)
 	assert.Equal(t, "test-maxscale.default.svc", details.Host)
 	assert.Equal(t, "3306", details.Port)
-	assert.Empty(t, details.AdditionalProperties, "no TLS while MaxScale TLS is off")
+	assert.NotContains(t, details.AdditionalProperties, tlsConnectionKey, "no TLS while MaxScale TLS is off")
+	// MaxScale rejects root: the admin connection goes to MariaDB with its own TLS.
+	assert.Equal(t, "test-primary.default.svc", details.AdditionalProperties[adminHostKey])
+	assert.Equal(t, "root", details.AdditionalProperties[adminUsernameKey])
+	assert.Equal(t, "true", details.AdditionalProperties[adminTLSKey])
+	assert.Equal(t, "mariadb-ca", details.AdditionalProperties[adminCAKey])
+	assert.Equal(t, "true", details.AdditionalProperties[adminSkipReplicaStartKey])
+
+	replication := newProxyContext(t, "replication", "", `{"enabled":true}`, append(connectionSecrets("test"), mxsCABundle, mariadbCABundle)...)
+	details, err = buildConnectionDetails(replication, mxs)
+	require.NoError(t, err)
+	assert.NotContains(t, details.AdditionalProperties, adminSkipReplicaStartKey,
+		"replication nodes start their replication on boot")
 
 	mxs.Spec.TLS = &mariadbv1alpha1.MaxScaleTLS{Enabled: true}
 	details, err = buildConnectionDetails(c, mxs)
 	require.NoError(t, err)
 	assert.Equal(t, "true", details.AdditionalProperties[tlsConnectionKey])
 	assert.Equal(t, "maxscale-ca", details.AdditionalProperties[tlsCAKey])
+	assert.Equal(t, "mariadb-ca", details.AdditionalProperties[adminCAKey])
 }
 
 func TestStatusMariaDB_WaitsForMaxScale(t *testing.T) {
@@ -232,7 +245,9 @@ func TestStatusMariaDB_WaitsForMaxScale(t *testing.T) {
 		Data:       map[string][]byte{userPasswordSecretKey: []byte("password")},
 	}
 
-	status, err := StatusMariaDB(newProxyContext(t, "galera", `{"tls":{"enabled":false}}`, `{"enabled":true}`, mdb, credentials))
+	rootCredentials := connectionSecrets("test")[1]
+
+	status, err := StatusMariaDB(newProxyContext(t, "galera", `{"tls":{"enabled":false}}`, `{"enabled":true}`, mdb, credentials, rootCredentials))
 	require.NoError(t, err)
 	assert.Equal(t, controller.Provisioning("Waiting for MaxScale proxy to be created"), status)
 
@@ -240,7 +255,7 @@ func TestStatusMariaDB_WaitsForMaxScale(t *testing.T) {
 		ObjectMeta: metav1.ObjectMeta{Name: "test-maxscale", Namespace: "default"},
 		Status:     mariadbv1alpha1.MaxScaleStatus{Conditions: []metav1.Condition{readyCondition}},
 	}
-	status, err = StatusMariaDB(newProxyContext(t, "galera", `{"tls":{"enabled":false}}`, `{"enabled":true}`, mdb, credentials, mxs))
+	status, err = StatusMariaDB(newProxyContext(t, "galera", `{"tls":{"enabled":false}}`, `{"enabled":true}`, mdb, credentials, rootCredentials, mxs))
 	require.NoError(t, err)
 	assert.Equal(t, corev1alpha1.InstancePhaseReady, status.Phase)
 	assert.Equal(t, "test-maxscale.default.svc", status.ConnectionDetails.Host)

@@ -17,6 +17,7 @@ package provider
 import (
 	"context"
 	"encoding/json"
+	"strconv"
 	"testing"
 
 	mariadbv1alpha1 "github.com/mariadb-operator/mariadb-operator/v26/api/v1alpha1"
@@ -161,6 +162,37 @@ func TestDesiredMariaDB_SchedulingPolicy(t *testing.T) {
 		"a constraint without a selector counts the MariaDB pods")
 	assert.Equal(t, map[string]string{"app": "custom"}, mdb.Spec.TopologySpreadConstraints[1].LabelSelector.MatchLabels)
 	assert.Equal(t, defaultHAAffinity("test"), mdb.Spec.Affinity, "an unset affinity keeps the HA default")
+}
+
+func TestDesiredMariaDB_SkipsReplicaStartOutsideReplicationTopology(t *testing.T) {
+	userConfig := "[mariadb]\nmax_connections=500\nskip_slave_start=0\n\n"
+	tests := []struct {
+		topology   string
+		userConfig string
+		want       *string
+	}{
+		{topology: "", want: ptr.To(skipReplicaStartCnf)},
+		{topology: "galera", want: ptr.To(skipReplicaStartCnf)},
+		{topology: "galera", userConfig: userConfig, want: ptr.To("[mariadb]\nmax_connections=500\nskip_slave_start=0\n\n" + skipReplicaStartCnf)},
+		// The operator does not restart replicas' replication after a Pod restart.
+		{topology: "replication", want: nil},
+		{topology: "replication", userConfig: userConfig, want: ptr.To(userConfig)},
+	}
+	for _, tt := range tests {
+		t.Run(tt.topology+"/"+strconv.FormatBool(tt.userConfig != ""), func(t *testing.T) {
+			var components map[string]corev1alpha1.ComponentSpec
+			if tt.userConfig != "" {
+				params, err := json.Marshal(map[string]string{"configuration": tt.userConfig})
+				require.NoError(t, err)
+				components = map[string]corev1alpha1.ComponentSpec{common.ComponentEngine: {
+					Type: common.ComponentTypeMariaDB, Image: "mariadb:12.3", Parameters: &runtime.RawExtension{Raw: params},
+				}}
+			}
+			mdb, err := desiredMariaDB(newSyncHarness(t, tt.topology, components).Context)
+			require.NoError(t, err)
+			assert.Equal(t, tt.want, mdb.Spec.MyCnf)
+		})
+	}
 }
 
 func TestDesiredMariaDB_NoTopologySpreadByDefault(t *testing.T) {

@@ -108,6 +108,39 @@ spec:
                   }
                 }'
 
+    # The admin connection bypasses MaxScale, which rejects root, and has
+    # server-level privileges on the primary.
+    - name: connect-admin
+      timeouts:
+        exec: 3m
+      try:
+        - script:
+            content: |
+              set -eu
+              kubectl -n "$NAMESPACE" run mariadb-maxscale-admin-check \
+                --rm -i --restart=Never \
+                --image=mariadb:12.3 \
+                --overrides='{
+                  "spec": {
+                    "containers": [{
+                      "name": "mariadb-maxscale-admin-check",
+                      "image": "mariadb:12.3",
+                      "command": ["sh", "-c"],
+                      "args": ["set -eu; mariadb -h \"$DB_HOST\" -P \"$DB_PORT\" -u \"$DB_USER\" --ssl-ca=/tls/ca.crt --ssl-verify-server-cert -Nse \"CREATE DATABASE admin_check; DROP DATABASE admin_check; SELECT CURRENT_USER();\""],
+                      "env": [
+                        {"name": "DB_HOST", "valueFrom": {"secretKeyRef": {"name": "test-maxscale-conn", "key": "admin-host"}}},
+                        {"name": "DB_PORT", "valueFrom": {"secretKeyRef": {"name": "test-maxscale-conn", "key": "admin-port"}}},
+                        {"name": "DB_USER", "valueFrom": {"secretKeyRef": {"name": "test-maxscale-conn", "key": "admin-username"}}},
+                        {"name": "MYSQL_PWD", "valueFrom": {"secretKeyRef": {"name": "test-maxscale-conn", "key": "admin-password"}}}
+                      ],
+                      "volumeMounts": [{"name": "tls", "mountPath": "/tls", "readOnly": true}]
+                    }],
+                    "volumes": [{"name": "tls", "secret": {"secretName": "test-maxscale-conn", "items": [{"key": "admin-ca.crt", "path": "ca.crt"}]}}]
+                  }
+                }'
+            check:
+              (contains($stdout, 'root@')): true
+
     # Disabling the proxy removes MaxScale and repoints the connection details
     # at the primary Service.
     - name: disable-proxy
