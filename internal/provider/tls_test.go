@@ -17,6 +17,8 @@ package provider
 import (
 	"context"
 	"errors"
+	"reflect"
+	"strings"
 	"testing"
 
 	mariadbv1alpha1 "github.com/mariadb-operator/mariadb-operator/v26/api/v1alpha1"
@@ -117,47 +119,68 @@ func TestResolveTLSSettings(t *testing.T) {
 	}
 }
 
-func TestBuildConnectionDetailsIncludesTLSCA(t *testing.T) {
-	credentials := &corev1.Secret{
-		ObjectMeta: metav1.ObjectMeta{Name: userSecretName("test"), Namespace: "default"},
-		Data:       map[string][]byte{userPasswordSecretKey: []byte("password")},
+// connectionSecrets are the application user's and root's password Secrets.
+func connectionSecrets(name string) []client.Object {
+	return []client.Object{
+		&corev1.Secret{
+			ObjectMeta: metav1.ObjectMeta{Name: userSecretName(name), Namespace: "default"},
+			Data:       map[string][]byte{userPasswordSecretKey: []byte("password")},
+		},
+		&corev1.Secret{
+			ObjectMeta: metav1.ObjectMeta{Name: rootSecretName(name), Namespace: "default"},
+			Data:       map[string][]byte{rootPasswordSecretKey: []byte("root-password")},
+		},
 	}
+}
+
+func TestBuildConnectionDetailsIncludesTLSCA(t *testing.T) {
 	caBundle := &corev1.Secret{
 		ObjectMeta: metav1.ObjectMeta{Name: tlsCABundleSecretName("test"), Namespace: "default"},
 		Data:       map[string][]byte{tlsCAKey: []byte("test-ca")},
 	}
 
-	details, err := buildConnectionDetails(newTLSContext(t, "", "", credentials, caBundle), nil)
+	details, err := buildConnectionDetails(newTLSContext(t, "", "", append(connectionSecrets("test"), caBundle)...), nil)
 	if err != nil {
 		t.Fatalf("buildConnectionDetails() error = %v", err)
 	}
-	if details.AdditionalProperties[tlsConnectionKey] != "true" ||
-		details.AdditionalProperties[tlsCAKey] != "test-ca" {
-		t.Fatalf("unexpected TLS connection details: %+v", details.AdditionalProperties)
+	want := map[string]string{
+		tlsConnectionKey: "true", tlsCAKey: "test-ca",
+		adminUsernameKey: "root", adminPasswordKey: "root-password", adminHostKey: "test.default.svc", adminPortKey: "3306",
+		adminTLSKey: "true", adminCAKey: "test-ca",
+	}
+	if !reflect.DeepEqual(details.AdditionalProperties, want) {
+		t.Fatalf("connection details = %+v, want %+v", details.AdditionalProperties, want)
+	}
+	if details.Username != defaultInitialUser {
+		t.Fatalf("the application connection must keep the initial user, got %q", details.Username)
 	}
 }
 
 func TestBuildConnectionDetailsWaitsForTLSCA(t *testing.T) {
-	credentials := &corev1.Secret{
-		ObjectMeta: metav1.ObjectMeta{Name: userSecretName("test"), Namespace: "default"},
-		Data:       map[string][]byte{userPasswordSecretKey: []byte("password")},
-	}
-	_, err := buildConnectionDetails(newTLSContext(t, "", "", credentials), nil)
+	_, err := buildConnectionDetails(newTLSContext(t, "", "", connectionSecrets("test")...), nil)
 	if !errors.Is(err, errTLSCABundleNotReady) {
 		t.Fatalf("expected errTLSCABundleNotReady, got %v", err)
 	}
 }
 
-func TestBuildConnectionDetailsOmitsTLSWhenDisabled(t *testing.T) {
-	credentials := &corev1.Secret{
-		ObjectMeta: metav1.ObjectMeta{Name: userSecretName("test"), Namespace: "default"},
-		Data:       map[string][]byte{userPasswordSecretKey: []byte("password")},
+func TestBuildConnectionDetailsWaitsForRootSecret(t *testing.T) {
+	_, err := buildConnectionDetails(newTLSContext(t, "", `{"tls":{"enabled":false}}`, connectionSecrets("test")[0]), nil)
+	if err == nil || !strings.Contains(err.Error(), "root credentials") {
+		t.Fatalf("expected a missing root Secret error, got %v", err)
 	}
-	details, err := buildConnectionDetails(newTLSContext(t, "", `{"tls":{"enabled":false}}`, credentials), nil)
+}
+
+func TestBuildConnectionDetailsOmitsTLSWhenDisabled(t *testing.T) {
+	details, err := buildConnectionDetails(newTLSContext(t, "", `{"tls":{"enabled":false}}`, connectionSecrets("test")...), nil)
 	if err != nil {
 		t.Fatalf("buildConnectionDetails() error = %v", err)
 	}
-	if len(details.AdditionalProperties) != 0 {
-		t.Fatalf("expected no TLS connection details, got %+v", details.AdditionalProperties)
+	for _, key := range []string{tlsConnectionKey, tlsCAKey, adminTLSKey, adminCAKey} {
+		if _, ok := details.AdditionalProperties[key]; ok {
+			t.Fatalf("expected no %q without TLS, got %+v", key, details.AdditionalProperties)
+		}
+	}
+	if details.AdditionalProperties[adminUsernameKey] != "root" || details.AdditionalProperties[adminPasswordKey] != "root-password" {
+		t.Fatalf("expected the admin credentials, got %+v", details.AdditionalProperties)
 	}
 }

@@ -42,6 +42,9 @@ metadata:
   name: test-maxscale-conn
 (base64_decode(data.password) != ''): true
 (contains(base64_decode(data.host), 'test-maxscale-maxscale')): true
+# MaxScale rejects root: the admin connection targets the primary directly.
+(contains(base64_decode(data."admin-host"), 'test-maxscale-primary')): true
+(base64_decode(data."admin-username") == 'root'): true
 ---
 apiVersion: v1
 kind: Service

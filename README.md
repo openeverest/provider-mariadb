@@ -157,6 +157,19 @@ kubectl get instance my-instance -o jsonpath='{.status.connectionSecretRef.name}
 The credentials (host, port, username, password, uri) live in the connection
 Secret named by `.status.connectionSecretRef.name`.
 
+The same Secret also carries an admin connection for tools that need
+server-level privileges, such as migrations that set up replication:
+
+| Key | Value |
+| --- | --- |
+| `admin-username`, `admin-password` | `root` and its password |
+| `admin-host`, `admin-port` | the MariaDB Service (the primary Service for `galera` and `replication`), never MaxScale, which rejects `root` |
+| `admin-tls`, `admin-ca.crt` | present when MariaDB has TLS enabled; the CA of the MariaDB server certificate |
+
+Applications should keep using `username`/`password`, which only have access
+to the initial `everest` database. Anyone who can read the connection details
+gets `root`.
+
 TLS is enabled by default. The same connection Secret contains `tls: "true"`
 and the operator-generated CA bundle under `ca.crt`, allowing clients to verify
 the MariaDB server certificate. Unencrypted connections remain accepted by
