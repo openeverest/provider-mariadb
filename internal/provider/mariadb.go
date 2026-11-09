@@ -18,6 +18,7 @@ import (
 	"errors"
 	"fmt"
 	"strconv"
+	"strings"
 
 	mariadbv1alpha1 "github.com/mariadb-operator/mariadb-operator/v26/api/v1alpha1"
 	corev1 "k8s.io/api/core/v1"
@@ -160,12 +161,11 @@ func desiredMariaDB(c *controller.Context) (*mariadbv1alpha1.MariaDB, error) {
 		}
 	}
 
-	// Optional my.cnf from the engine component's `configuration` parameter.
-	var myCnf *string
+	// Optional my.cnf from the engine component's `configuration` parameter,
+	// followed by the provider's own settings.
 	var params components.MariadbParameters
-	if c.TryDecodeComponentParameters(engine, &params) && params.Configuration != "" {
-		myCnf = &params.Configuration
-	}
+	c.TryDecodeComponentParameters(engine, &params)
+	myCnf := buildMyCnf(params.Configuration, !isReplicationTopology(c))
 
 	// Nil when monitoring is not enabled, so the operator deploys no exporter.
 	metrics, err := buildMetrics(c)
@@ -400,7 +400,37 @@ const (
 	adminTLSKey      = "admin-tls"
 	adminCAKey       = "admin-ca.crt"
 	rootUser         = "root"
+	// adminSkipReplicaStartKey tells that the server keeps replication
+	// connections stopped on start (see skipReplicaStartCnf). MariaDB does not
+	// expose skip-slave-start as a variable, so clients cannot check it.
+	adminSkipReplicaStartKey = "admin-skip-replica-start"
 )
+
+// skipReplicaStartCnf keeps replication connections stopped when the server
+// starts. MariaDB does not persist a connection's replication filters, so a
+// connection started on boot would replicate everything the source writes,
+// including account changes, until its filters are set again. Tools that
+// replicate into the instance (migrations) start their connection themselves.
+// It is appended after the user's configuration so that it applies.
+const skipReplicaStartCnf = "[mariadb]\nskip-slave-start\n"
+
+// buildMyCnf combines the user's my.cnf with the provider's settings. The
+// replication topology is left out of skip-slave-start: the operator does not
+// restart its replicas' replication after a Pod restart.
+func buildMyCnf(userConfig string, skipReplicaStart bool) *string {
+	if !skipReplicaStart {
+		if userConfig == "" {
+			return nil
+		}
+		return &userConfig
+	}
+	config := userConfig
+	if config != "" {
+		config = strings.TrimRight(config, "\n") + "\n\n"
+	}
+	config += skipReplicaStartCnf
+	return &config
+}
 
 // buildConnectionDetails reads the generated user credentials secret and combines
 // it with the client-facing Service host to produce a full set of connection
@@ -448,6 +478,9 @@ func buildConnectionDetails(c *controller.Context, mxs *mariadbv1alpha1.MaxScale
 		adminPasswordKey: string(rootPassword),
 		adminHostKey:     resolveHost(c, databaseService),
 		adminPortKey:     port,
+	}
+	if !isReplicationTopology(c) {
+		additionalProperties[adminSkipReplicaStartKey] = strconv.FormatBool(true)
 	}
 
 	if tlsEnabled {

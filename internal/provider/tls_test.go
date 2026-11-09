@@ -146,7 +146,7 @@ func TestBuildConnectionDetailsIncludesTLSCA(t *testing.T) {
 	want := map[string]string{
 		tlsConnectionKey: "true", tlsCAKey: "test-ca",
 		adminUsernameKey: "root", adminPasswordKey: "root-password", adminHostKey: "test.default.svc", adminPortKey: "3306",
-		adminTLSKey: "true", adminCAKey: "test-ca",
+		adminTLSKey: "true", adminCAKey: "test-ca", adminSkipReplicaStartKey: "true",
 	}
 	if !reflect.DeepEqual(details.AdditionalProperties, want) {
 		t.Fatalf("connection details = %+v, want %+v", details.AdditionalProperties, want)

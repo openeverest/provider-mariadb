@@ -165,10 +165,21 @@ server-level privileges, such as migrations that set up replication:
 | `admin-username`, `admin-password` | `root` and its password |
 | `admin-host`, `admin-port` | the MariaDB Service (the primary Service for `galera` and `replication`), never MaxScale, which rejects `root` |
 | `admin-tls`, `admin-ca.crt` | present when MariaDB has TLS enabled; the CA of the MariaDB server certificate |
+| `admin-skip-replica-start` | `"true"` for `standalone` and `galera`: replication connections stay stopped when the server starts (see below) |
 
 Applications should keep using `username`/`password`, which only have access
 to the initial `everest` database. Anyone who can read the connection details
 gets `root`.
+
+`standalone` and `galera` servers run with `skip-slave-start`, appended after
+the user's `configuration`. MariaDB does not persist a replication
+connection's filters, so a connection started on boot would apply everything
+its source writes, account changes included, before a tool such as a
+migration could restore its filters. Neither topology uses replication
+connections otherwise; the `replication` topology keeps the default, because
+the operator does not restart replicas' replication after a Pod restart. A
+replication connection you create yourself on these topologies must be
+started again (`START SLAVE`) after a restart.
 
 TLS is enabled by default. The same connection Secret contains `tls: "true"`
 and the operator-generated CA bundle under `ca.crt`, allowing clients to verify

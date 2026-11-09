@@ -34,3 +34,4 @@ metadata:
 (base64_decode(data."admin-password") != ''): true
 (base64_decode(data."admin-tls") == 'true'): true
 (base64_decode(data."admin-ca.crt") != ''): true
+(base64_decode(data."admin-skip-replica-start") == 'true'): true

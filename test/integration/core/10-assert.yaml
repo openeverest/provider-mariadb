@@ -28,6 +28,8 @@ spec:
     required: false
   username: everest
   database: everest
+  # Replication connections stay stopped when the server starts.
+  (contains(myCnf, 'skip-slave-start')): true
   rootPasswordSecretKeyRef:
     name: everest-secrets-test-instance-root
     key: root-password

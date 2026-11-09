@@ -213,6 +213,13 @@ func TestBuildConnectionDetails_ThroughMaxScale(t *testing.T) {
 	assert.Equal(t, "root", details.AdditionalProperties[adminUsernameKey])
 	assert.Equal(t, "true", details.AdditionalProperties[adminTLSKey])
 	assert.Equal(t, "mariadb-ca", details.AdditionalProperties[adminCAKey])
+	assert.Equal(t, "true", details.AdditionalProperties[adminSkipReplicaStartKey])
+
+	replication := newProxyContext(t, "replication", "", `{"enabled":true}`, append(connectionSecrets("test"), mxsCABundle, mariadbCABundle)...)
+	details, err = buildConnectionDetails(replication, mxs)
+	require.NoError(t, err)
+	assert.NotContains(t, details.AdditionalProperties, adminSkipReplicaStartKey,
+		"replication nodes start their replication on boot")
 
 	mxs.Spec.TLS = &mariadbv1alpha1.MaxScaleTLS{Enabled: true}
 	details, err = buildConnectionDetails(c, mxs)
