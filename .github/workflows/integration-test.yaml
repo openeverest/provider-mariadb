@@ -35,7 +35,7 @@ env:
   IMG: provider-mariadb:ci
   # Ref of openeverest/openeverest to build the platform from. Pinned to the
   # commit of the core version in go.mod.
-  OPENEVEREST_BRANCH: 02a02d35d69a0f17ac89dc9b95712709346af77c
+  OPENEVEREST_BRANCH: 0223b79fa57dc2851f5f00f2101a35f1ab396c8a
 
 jobs:
   run:
