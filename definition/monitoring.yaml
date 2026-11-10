@@ -1,14 +1,14 @@
 # Monitoring contract, published by `provider-sdk generate` as
 # Provider.spec.monitoring.
 #
-# componentTypes: what each component type from provider.yaml exposes. The
-# mariadb-operator runs a mysqld-exporter Deployment that probes every MariaDB
-# pod while a bound monitoring class requires metrics.
+# componentTypes: what each component type from provider.yaml exposes (its
+# kind is declared in provider.yaml). The mariadb-operator runs a
+# mysqld-exporter Deployment that probes every MariaDB pod while a bound
+# monitoring class requires metrics.
 #
 # No integrations: the mariadb-operator has no operator-native monitoring
 # agent (such as PMM) to render.
 
 componentTypes:
   mariadb:
-    kind: mariadb
     metrics: Exporter
