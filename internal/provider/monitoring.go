@@ -16,392 +16,197 @@ package provider
 
 import (
 	"cmp"
-	"encoding/json"
-	"errors"
 	"fmt"
-	"slices"
 
 	mariadbv1alpha1 "github.com/mariadb-operator/mariadb-operator/v26/api/v1alpha1"
 	"github.com/mariadb-operator/mariadb-operator/v26/pkg/builder"
+	labels "github.com/mariadb-operator/mariadb-operator/v26/pkg/builder/labels"
+	"github.com/mariadb-operator/mariadb-operator/v26/pkg/statefulset"
 	monitoringv1 "github.com/prometheus-operator/prometheus-operator/pkg/apis/monitoring/v1"
+	appsv1 "k8s.io/api/apps/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime/schema"
+	"k8s.io/apimachinery/pkg/util/intstr"
 	"k8s.io/utils/ptr"
-	"sigs.k8s.io/controller-runtime/pkg/client"
 
 	corev1alpha1 "github.com/openeverest/openeverest/v2/api/core/v1alpha1"
 	"github.com/openeverest/openeverest/v2/provider-runtime/controller"
 
-	"github.com/openeverest/provider-mariadb/definition/components"
 	"github.com/openeverest/provider-mariadb/internal/common"
 )
 
-// vmIgnorePrometheusUpdatesAnnotation stops the VictoriaMetrics operator's
-// Prometheus converter from syncing the operator's ServiceMonitor into the
-// VMServiceScrape of the same name, which the provider owns instead.
-const vmIgnorePrometheusUpdatesAnnotation = "operator.victoriametrics.com/ignore-prometheus-updates"
+const (
+	// metricsExporterComponentType is the component type in the provider spec
+	// that pins the mysqld-exporter image.
+	metricsExporterComponentType = "mysqld-exporter"
 
-// vmServiceScrapeGVK identifies the VictoriaMetrics operator VMServiceScrape.
-// It is handled as unstructured to avoid depending on the VictoriaMetrics
-// operator API module, which pulls in most of VictoriaMetrics.
-var vmServiceScrapeGVK = schema.GroupVersionKind{
-	Group:   "operator.victoriametrics.com",
-	Version: "v1beta1",
-	Kind:    "VMServiceScrape",
-}
+	// metricsKind is the engine kind of the mariadb component type, as
+	// declared in definition/monitoring.yaml.
+	metricsKind = "mariadb"
 
-// serviceMonitorGVK identifies the Prometheus Operator ServiceMonitor. It is
-// handled as unstructured so its CRD is only needed when one exists.
-var serviceMonitorGVK = monitoringv1.SchemeGroupVersion.WithKind(monitoringv1.ServiceMonitorsKind)
+	// metricsProbePath is the mysqld-exporter multi-target endpoint: it
+	// scrapes the MariaDB named by the target query parameter.
+	metricsProbePath = "/probe"
 
-// monitoringParams decodes the monitoring component parameters from the
-// Instance. It returns nil when the monitoring component is absent, making
-// monitoring opt-in.
-func monitoringParams(in *corev1alpha1.Instance) (*components.MonitoringParameters, error) {
-	monitoring, ok := in.Spec.Components[common.ComponentMonitoring]
-	if !ok {
-		return nil, nil
-	}
-	if monitoring.Parameters == nil || monitoring.Parameters.Raw == nil {
-		return nil, errors.New("monitoring parameters not set")
-	}
+	defaultMariaDBPort = 3306
+)
 
-	var params components.MonitoringParameters
-	if err := json.Unmarshal(monitoring.Parameters.Raw, &params); err != nil {
-		return nil, fmt.Errorf("decode monitoring parameters: %w", err)
-	}
-	return &params, nil
-}
+var (
+	// The GVKs below are read as unstructured: the client does not cache
+	// unstructured objects, so a get needs no list/watch RBAC and no
+	// cluster-wide informer, and an absent CRD is a NoMatch error.
+	deploymentGVK      = appsv1.SchemeGroupVersion.WithKind("Deployment")
+	serviceMonitorGVK  = monitoringv1.SchemeGroupVersion.WithKind(monitoringv1.ServiceMonitorsKind)
+	vmServiceScrapeGVK = schema.GroupVersionKind{Group: "operator.victoriametrics.com", Version: "v1beta1", Kind: "VMServiceScrape"}
+)
 
-// buildMetrics translates the monitoring component into the mariadb-operator's
-// spec.metrics. It returns nil when metrics are not enabled, so the operator
-// deploys no exporter and creates no Prometheus objects.
+// buildMetrics returns the mariadb-operator's spec.metrics while a monitoring
+// class bound to the Instance requires metrics, and nil otherwise, so the
+// operator deploys no exporter. Scrape objects come from the class
+// controllers, from the endpoints MonitoringSources publishes, so the
+// operator's ServiceMonitor stays off.
 func buildMetrics(c *controller.Context) (*mariadbv1alpha1.MariadbMetrics, error) {
-	params, err := monitoringParams(c.Instance())
-	if err != nil {
+	required, err := metricsExporterRequired(c)
+	if err != nil || !required {
 		return nil, err
-	}
-	if params == nil || !params.Enabled {
-		return nil, nil
-	}
-
-	image, err := resolveExporterImage(c)
-	if err != nil {
-		return nil, err
-	}
-
-	metrics := &mariadbv1alpha1.MariadbMetrics{
-		Enabled: true,
-		Exporter: mariadbv1alpha1.Exporter{
-			Image:       image,
-			PodMetadata: &mariadbv1alpha1.Metadata{Labels: c.PodLabels(common.ComponentMonitoring)},
-		},
-		ServiceMonitor: mariadbv1alpha1.ServiceMonitor{
-			Enabled:           ptr.To(isServiceMonitorEnabled(params)),
-			PrometheusRelease: params.ServiceMonitor.PrometheusRelease,
-			JobLabel:          params.ServiceMonitor.JobLabel,
-			Interval:          params.ServiceMonitor.Interval,
-			ScrapeTimeout:     params.ServiceMonitor.ScrapeTimeout,
-		},
-	}
-
-	monitoring := c.Instance().Spec.Components[common.ComponentMonitoring]
-	if monitoring.Resources != nil && (monitoring.Resources.Limits != nil || monitoring.Resources.Requests != nil) {
-		metrics.Exporter.Resources = &mariadbv1alpha1.ResourceRequirements{
-			Limits:   monitoring.Resources.Limits,
-			Requests: monitoring.Resources.Requests,
-		}
-	}
-
-	return metrics, nil
-}
-
-// resolveExporterImage returns the mysqld-exporter image from the monitoring
-// component override, its selected version, or the provider default — mirroring
-// the engine image resolution precedence.
-func resolveExporterImage(c *controller.Context) (string, error) {
-	monitoring := c.Instance().Spec.Components[common.ComponentMonitoring]
-	if monitoring.Image != "" {
-		return monitoring.Image, nil
 	}
 
 	spec, err := c.ProviderSpec()
 	if err != nil {
-		return "", fmt.Errorf("get provider spec: %w", err)
+		return nil, fmt.Errorf("get provider spec: %w", err)
 	}
-
-	image := ""
-	if monitoring.Version != "" {
-		image = controller.GetImageForVersion(spec, common.ComponentMonitoring, monitoring.Version)
-	}
+	image := controller.GetDefaultImage(spec, metricsExporterComponentType)
 	if image == "" {
-		image = controller.GetDefaultImageForComponent(spec, common.ComponentMonitoring)
+		return nil, fmt.Errorf("provider spec has no image for component type %q", metricsExporterComponentType)
 	}
-	return image, nil
+
+	return &mariadbv1alpha1.MariadbMetrics{
+		Enabled: true,
+		Exporter: mariadbv1alpha1.Exporter{
+			Image: image,
+			// Not c.PodLabels: the exporter is no component of the Instance.
+			PodMetadata: &mariadbv1alpha1.Metadata{Labels: map[string]string{
+				controller.ProviderLabel: common.ProviderName,
+				controller.InstanceLabel: c.Name(),
+			}},
+		},
+		ServiceMonitor: mariadbv1alpha1.ServiceMonitor{Enabled: ptr.To(false)},
+	}, nil
 }
 
-// isVictoriaMetricsEnabled reports whether a VMServiceScrape is requested.
-func isVictoriaMetricsEnabled(params *components.MonitoringParameters) bool {
-	return params != nil && bool(params.Enabled) && bool(params.VictoriaMetrics.Enabled)
-}
-
-// isServiceMonitorEnabled reports whether the operator should create a
-// ServiceMonitor. When unset, it defaults to true unless VictoriaMetrics is
-// enabled, so the exporter is not scraped twice.
-func isServiceMonitorEnabled(params *components.MonitoringParameters) bool {
-	if params == nil || !params.Enabled {
-		return false
-	}
-	if params.ServiceMonitor.Enabled != nil {
-		return bool(*params.ServiceMonitor.Enabled)
-	}
-	return !bool(params.VictoriaMetrics.Enabled)
-}
-
-// SyncServiceMonitor deletes the operator's ServiceMonitor when metrics are
-// enabled but the ServiceMonitor is not. The mariadb-operator stops reconciling
-// it once spec.metrics.serviceMonitor.enabled is false, but does not delete it.
-func SyncServiceMonitor(c *controller.Context) error {
-	params, err := monitoringParams(c.Instance())
-	if err != nil {
-		return err
-	}
-	if params == nil || !bool(params.Enabled) || isServiceMonitorEnabled(params) {
-		return nil
-	}
-
-	mdb := &mariadbv1alpha1.MariaDB{}
-	if err := c.Get(mdb, c.Name()); err != nil {
-		return fmt.Errorf("get MariaDB: %w", err)
-	}
-	// Wait until the disabled ServiceMonitor is visible on the MariaDB, so the
-	// operator does not recreate it from a stale spec. The MariaDB watch
-	// re-enqueues the Instance once it is.
-	if !mdb.AreMetricsEnabled() || mdb.IsServiceMonitorEnabled() {
-		return nil
-	}
-
-	svcMonitor := &unstructured.Unstructured{}
-	svcMonitor.SetGroupVersionKind(serviceMonitorGVK)
-	if err := c.Get(svcMonitor, mdb.MetricsKey().Name); err != nil {
-		if apierrors.IsNotFound(err) || meta.IsNoMatchError(err) {
-			return nil
-		}
-		return fmt.Errorf("get ServiceMonitor: %w", err)
-	}
-	if !metav1.IsControlledBy(svcMonitor, mdb) || svcMonitor.GetDeletionTimestamp() != nil {
-		return nil
-	}
-	if err := c.Delete(svcMonitor); err != nil {
-		return fmt.Errorf("delete ServiceMonitor %q: %w", svcMonitor.GetName(), err)
-	}
-	return nil
-}
-
-// vmServiceScrapeName returns the name of the VMServiceScrape for the given
-// instance. It matches the operator's ServiceMonitor name, which is also the
-// name the VictoriaMetrics Prometheus converter gives its VMServiceScrape.
-func vmServiceScrapeName(instanceName string) string {
-	mdb := &mariadbv1alpha1.MariaDB{ObjectMeta: metav1.ObjectMeta{Name: instanceName}}
-	return mdb.MetricsKey().Name
-}
-
-func newVMServiceScrape() *unstructured.Unstructured {
-	u := &unstructured.Unstructured{}
-	u.SetGroupVersionKind(vmServiceScrapeGVK)
-	return u
-}
-
-// SyncVMServiceScrape server-side applies a VMServiceScrape for the exporter
-// when VictoriaMetrics is enabled, and deletes it otherwise.
-//
-// A VMServiceScrape converted from the operator's ServiceMonitor may already
-// exist under the same name. It is taken over: the applied spec replaces the
-// converted one and the ignore annotation stops further conversions, so the
-// exporter is scraped once.
-func SyncVMServiceScrape(c *controller.Context) error {
-	params, err := monitoringParams(c.Instance())
-	if err != nil {
-		return err
-	}
-	if !isVictoriaMetricsEnabled(params) {
-		return teardownVMServiceScrape(c)
-	}
-
-	mdb := &mariadbv1alpha1.MariaDB{}
-	if err := c.Get(mdb, c.Name()); err != nil {
-		return fmt.Errorf("get MariaDB: %w", err)
-	}
-	// The cache may not reflect the metrics just applied yet; the MariaDB
-	// watch re-enqueues the Instance once it does.
-	if !mdb.AreMetricsEnabled() {
-		return nil
-	}
-
-	desired, err := desiredVMServiceScrape(c, mdb, params.VictoriaMetrics)
-	if err != nil {
-		return err
-	}
-	if err := adoptVMServiceScrape(c, desired.GetName()); err != nil {
-		return err
-	}
-	if err := c.Apply(desired); err != nil {
-		return fmt.Errorf("apply VMServiceScrape: %w", err)
-	}
-	return nil
-}
-
-// desiredVMServiceScrape translates the ServiceMonitor the operator builds for
-// the MariaDB into a VMServiceScrape, so the per-Pod targets and relabelings
-// stay identical to the operator's, including the role of each Pod.
-func desiredVMServiceScrape(
-	c *controller.Context,
-	mdb *mariadbv1alpha1.MariaDB,
-	params components.VictoriaMetricsParameters,
-) (*unstructured.Unstructured, error) {
-	svcMonitor, err := builder.NewBuilder(c.Client().Scheme(), nil, nil).BuildServiceMonitor(mdb)
-	if err != nil {
-		return nil, fmt.Errorf("build ServiceMonitor: %w", err)
-	}
-
-	endpoints := make([]any, 0, len(svcMonitor.Spec.Endpoints))
-	for _, e := range svcMonitor.Spec.Endpoints {
-		endpoint := map[string]any{"port": e.Port}
-		setString(endpoint, "path", e.Path)
-		setString(endpoint, "interval", cmp.Or(params.Interval, string(e.Interval)))
-		setString(endpoint, "scrapeTimeout", cmp.Or(params.ScrapeTimeout, string(e.ScrapeTimeout)))
-		if len(e.Params) > 0 {
-			query := make(map[string]any, len(e.Params))
-			for key, values := range e.Params {
-				query[key] = toAnySlice(values)
-			}
-			endpoint["params"] = query
-		}
-		if rcs := convertRelabelConfigs(e.RelabelConfigs); len(rcs) > 0 {
-			endpoint["relabelConfigs"] = rcs
-		}
-		if rcs := convertRelabelConfigs(e.MetricRelabelConfigs); len(rcs) > 0 {
-			endpoint["metricRelabelConfigs"] = rcs
-		}
-		endpoints = append(endpoints, endpoint)
-	}
-
-	matchLabels := make(map[string]any, len(svcMonitor.Spec.Selector.MatchLabels))
-	for k, v := range svcMonitor.Spec.Selector.MatchLabels {
-		matchLabels[k] = v
-	}
-
-	objMeta := c.ObjectMeta(svcMonitor.Name)
-	vmss := newVMServiceScrape()
-	vmss.SetName(objMeta.Name)
-	vmss.SetNamespace(objMeta.Namespace)
-	vmss.SetLabels(objMeta.Labels)
-	vmss.SetAnnotations(map[string]string{vmIgnorePrometheusUpdatesAnnotation: "enabled"})
-	vmss.Object["spec"] = map[string]any{
-		"selector":          map[string]any{"matchLabels": matchLabels},
-		"namespaceSelector": map[string]any{"matchNames": toAnySlice(svcMonitor.Spec.NamespaceSelector.MatchNames)},
-		"endpoints":         endpoints,
-	}
-	return vmss, nil
-}
-
-// convertRelabelConfigs maps Prometheus relabel configs onto the
-// VMServiceScrape ones, which use the same field names.
-func convertRelabelConfigs(in []monitoringv1.RelabelConfig) []any {
-	out := make([]any, 0, len(in))
-	for _, rc := range in {
-		config := map[string]any{}
-		if len(rc.SourceLabels) > 0 {
-			labels := make([]any, 0, len(rc.SourceLabels))
-			for _, label := range rc.SourceLabels {
-				labels = append(labels, string(label))
-			}
-			config["sourceLabels"] = labels
-		}
-		setString(config, "separator", ptr.Deref(rc.Separator, ""))
-		setString(config, "targetLabel", rc.TargetLabel)
-		setString(config, "regex", rc.Regex)
-		setString(config, "replacement", ptr.Deref(rc.Replacement, ""))
-		setString(config, "action", rc.Action)
-		if rc.Modulus != 0 {
-			config["modulus"] = int64(rc.Modulus)
-		}
-		out = append(out, config)
-	}
-	return out
-}
-
-func setString(m map[string]any, key, value string) {
-	if value != "" {
-		m[key] = value
-	}
-}
-
-func toAnySlice(values []string) []any {
-	out := make([]any, 0, len(values))
-	for _, v := range values {
-		out = append(out, v)
-	}
-	return out
-}
-
-// adoptVMServiceScrape drops the controller reference from a VMServiceScrape
-// the provider does not control yet. The Prometheus converter sets one to the
-// ServiceMonitor when its owner references are enabled, and an object can
-// only have a single controller.
-func adoptVMServiceScrape(c *controller.Context, name string) error {
-	existing := newVMServiceScrape()
-	if err := c.Get(existing, name); err != nil {
-		if apierrors.IsNotFound(err) {
-			return nil
-		}
-		return fmt.Errorf("get VMServiceScrape: %w", err)
-	}
-	if metav1.IsControlledBy(existing, c.Instance()) || metav1.GetControllerOf(existing) == nil {
-		return nil
-	}
-	patch := client.MergeFrom(existing.DeepCopy())
-	existing.SetOwnerReferences(slices.DeleteFunc(existing.GetOwnerReferences(), func(ref metav1.OwnerReference) bool {
-		return ptr.Deref(ref.Controller, false)
-	}))
-	if err := c.Client().Patch(c.Context(), existing, patch); err != nil {
-		return fmt.Errorf("adopt VMServiceScrape %q: %w", name, err)
-	}
-	return nil
-}
-
-// teardownVMServiceScrape deletes the VMServiceScrape the provider created.
-// Objects it does not control, such as the ones the Prometheus converter
-// creates, are left alone. A missing CRD means there is nothing to delete.
-func teardownVMServiceScrape(c *controller.Context) error {
-	vmss := newVMServiceScrape()
-	if err := c.Get(vmss, vmServiceScrapeName(c.Name())); err != nil {
-		if apierrors.IsNotFound(err) || meta.IsNoMatchError(err) {
-			return nil
-		}
-		return fmt.Errorf("get VMServiceScrape for teardown: %w", err)
-	}
-	if !metav1.IsControlledBy(vmss, c.Instance()) || vmss.GetDeletionTimestamp() != nil {
-		return nil
-	}
-	if err := c.Delete(vmss); err != nil {
-		return fmt.Errorf("delete VMServiceScrape %q: %w", vmss.GetName(), err)
-	}
-	return nil
-}
-
-// vmServiceScrapeCRDInstalled reports whether the VMServiceScrape CRD is
-// served by the cluster.
-func vmServiceScrapeCRDInstalled(c *controller.Context) (bool, error) {
-	_, err := c.Client().RESTMapper().RESTMapping(vmServiceScrapeGVK.GroupKind(), vmServiceScrapeGVK.Version)
-	if meta.IsNoMatchError(err) {
+// metricsExporterRequired says whether the exporter runs this pass: when a
+// bound class requires metrics or, while that is unresolved, when the live
+// MariaDB already runs it (removing and re-adding it would flap the scrape
+// for nothing).
+func metricsExporterRequired(c *controller.Context) (bool, error) {
+	// Without entries nothing is required: bindings of removed entries are
+	// ignored, so RequiredSources would answer NotRequired.
+	if m := c.Instance().Spec.Monitoring; m == nil || len(m.Destinations) == 0 {
 		return false, nil
 	}
+	req, err := c.RequiredSources()
 	if err != nil {
-		return false, fmt.Errorf("look up VMServiceScrape CRD: %w", err)
+		return false, err
 	}
-	return true, nil
+	live, err := liveMariaDB(c)
+	if err != nil {
+		return false, err
+	}
+	return req.Metrics.Else(live.AreMetricsEnabled()), nil
 }
+
+// MonitoringSources implements controller.MonitoringSourcesProvider. The
+// operator's mysqld-exporter is a single multi-target Deployment, so one
+// endpoint is published per MariaDB pod: the exporter pods' /probe with the
+// pod as target, which the class controllers turn into the instance label.
+// Endpoints are published while the MariaDB runs the exporter: they select the
+// exporter pods, so they yield no scrape target before the operator has
+// started them, and they stay published through rolling restarts.
+func (p *MariaDBProvider) MonitoringSources(c *controller.Context) (*corev1alpha1.MonitoringSources, error) {
+	mdb, err := liveMariaDB(c)
+	if err != nil {
+		return nil, err
+	}
+	s := &corev1alpha1.MonitoringSources{}
+	if !mdb.AreMetricsEnabled() {
+		return s, nil
+	}
+
+	selector := labels.NewLabelsBuilder().WithMetricsSelectorLabels(mdb.MetricsKey()).Build()
+	selector[controller.InstanceLabel] = c.Name()
+	service := mdb.InternalServiceKey().Name
+	port := cmp.Or(mdb.Spec.Port, defaultMariaDBPort)
+	for i := range int(mdb.Spec.Replicas) {
+		target := fmt.Sprintf("%s:%d", statefulset.PodFQDNWithService(mdb.ObjectMeta, i, service), port)
+		s.Metrics = append(s.Metrics, corev1alpha1.MetricsEndpoint{
+			Component:   common.ComponentEngine,
+			Kind:        metricsKind,
+			PodSelector: selector,
+			Port:        intstr.FromString(builder.MetricsPortName),
+			Path:        metricsProbePath,
+			Scheme:      "http",
+			Params:      map[string][]string{"target": {target}},
+		})
+	}
+	return s, nil
+}
+
+// SyncMetricsCleanup deletes what the mariadb-operator leaves behind: it
+// stops reconciling the exporter Deployment and the ServiceMonitor once they
+// are turned off, but never deletes them. It also deletes the VMServiceScrape
+// earlier provider versions created. Each object is deleted only once the
+// change is visible on the live MariaDB, so the operator does not recreate it
+// from a stale spec; the MariaDB watch re-enqueues the Instance once it is.
+func SyncMetricsCleanup(c *controller.Context) error {
+	mdb, err := liveMariaDB(c)
+	if err != nil || mdb.UID == "" {
+		return err
+	}
+	name := mdb.MetricsKey().Name
+	if !mdb.IsServiceMonitorEnabled() {
+		if err := deleteControlled(c, serviceMonitorGVK, name, mdb); err != nil {
+			return err
+		}
+	}
+	if !mdb.AreMetricsEnabled() {
+		if err := deleteControlled(c, deploymentGVK, name, mdb); err != nil {
+			return err
+		}
+	}
+	return deleteControlled(c, vmServiceScrapeGVK, name, c.Instance())
+}
+
+// deleteControlled deletes the named object when owner controls it. Objects
+// it does not control are left alone, and a missing CRD means there is
+// nothing to delete.
+func deleteControlled(c *controller.Context, gvk schema.GroupVersionKind, name string, owner metav1.Object) error {
+	obj := &unstructured.Unstructured{}
+	obj.SetGroupVersionKind(gvk)
+	if err := c.Get(obj, name); err != nil {
+		if apierrors.IsNotFound(err) || meta.IsNoMatchError(err) {
+			return nil
+		}
+		return fmt.Errorf("get %s %q: %w", gvk.Kind, name, err)
+	}
+	if !metav1.IsControlledBy(obj, owner) || obj.GetDeletionTimestamp() != nil {
+		return nil
+	}
+	if err := c.Delete(obj); err != nil {
+		return fmt.Errorf("delete %s %q: %w", gvk.Kind, name, err)
+	}
+	return nil
+}
+
+// liveMariaDB returns the MariaDB as it is now, empty before it exists.
+func liveMariaDB(c *controller.Context) (*mariadbv1alpha1.MariaDB, error) {
+	live := &mariadbv1alpha1.MariaDB{}
+	if err := c.Get(live, c.Name()); err != nil && !apierrors.IsNotFound(err) {
+		return nil, fmt.Errorf("get live MariaDB: %w", err)
+	}
+	return live, nil
+}
+
+var _ controller.MonitoringSourcesProvider = (*MariaDBProvider)(nil)

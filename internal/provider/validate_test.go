@@ -109,7 +109,7 @@ func TestValidate(t *testing.T) {
 	}{
 		{name: "valid standalone", fixture: standaloneFixture},
 		{name: "valid galera with MaxScale", fixture: galeraFixture},
-		{name: "valid replication with metrics", fixture: replicationFixture},
+		{name: "valid replication", fixture: replicationFixture},
 		{name: "no topology type", fixture: standaloneFixture, mutate: noTopology},
 		{
 			name:    "unknown topology",
@@ -266,28 +266,6 @@ func TestValidate(t *testing.T) {
 				c.Service = &corev1alpha1.Service{ServiceType: corev1.ServiceTypeExternalName}
 			}),
 			want: []string{"spec.components[proxy].service.serviceType"},
-		},
-		{
-			name:    "VictoriaMetrics with metrics",
-			fixture: replicationFixture,
-			mutate:  parameters(common.ComponentMonitoring, `{"enabled":true,"victoriaMetrics":{"enabled":true}}`),
-		},
-		{
-			name:    "metrics toggled from the UI",
-			fixture: replicationFixture,
-			mutate:  parameters(common.ComponentMonitoring, `{"enabled":"true","victoriaMetrics":{"enabled":"false"}}`),
-		},
-		{
-			name:    "VictoriaMetrics without metrics",
-			fixture: replicationFixture,
-			mutate:  parameters(common.ComponentMonitoring, `{"victoriaMetrics":{"enabled":true}}`),
-			want:    []string{"spec.components[monitoring].parameters.victoriaMetrics.enabled"},
-		},
-		{
-			name:    "monitoring without parameters",
-			fixture: replicationFixture,
-			mutate:  component(common.ComponentMonitoring, func(c *corev1alpha1.ComponentSpec) { c.Parameters = nil }),
-			want:    []string{"spec.components[monitoring].parameters"},
 		},
 		{
 			name:    "TLS required",

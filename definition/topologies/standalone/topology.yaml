@@ -19,11 +19,6 @@ config:
               nodeSelector: {}
               tolerations: {}
               topologySpreadConstraints: {}
-    monitoring:
-      optional: true
-      supportedFields:
-        properties:
-          resources: {}
 
 ui:
   sections:
@@ -118,28 +113,6 @@ ui:
             - numberOfNodes
             - resources
 
-    monitoring:
-      label: "Monitoring"
-      description: "Expose database metrics and integrate them with a Prometheus or VictoriaMetrics stack."
-      components:
-        enabled:
-          uiType: toggle
-          path: spec.components.monitoring.parameters.enabled
-          fieldParams:
-            label: "Enable metrics"
-            helperText: "Deploys the metrics exporter and a Prometheus ServiceMonitor. The ServiceMonitor requires the Prometheus Operator CRDs."
-            defaultValue: false
-        victoriaMetrics:
-          uiType: toggle
-          path: spec.components.monitoring.parameters.victoriaMetrics.enabled
-          fieldParams:
-            label: "VictoriaMetrics"
-            helperText: "Creates a VMServiceScrape for the VictoriaMetrics operator instead of the ServiceMonitor. Requires metrics to be enabled."
-            defaultValue: false
-      componentsOrder:
-        - enabled
-        - victoriaMetrics
-
     security:
       label: "Security"
       description: "Configure encryption for MariaDB client connections."
@@ -226,6 +199,5 @@ ui:
   sectionsOrder:
     - databaseVersion
     - resources
-    - monitoring
     - security
     - advanced

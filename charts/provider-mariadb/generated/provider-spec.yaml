@@ -68,88 +68,6 @@ spec:
               type: object
           type: object
       type: mariadb
-    monitoring:
-      parametersSchema:
-        openAPIV3Schema:
-          description: |-
-            MonitoringParameters defines parameters for the monitoring component.
-
-            The monitoring component maps onto the mariadb-operator's spec.metrics: it
-            deploys a mysqld-exporter and makes it discoverable by a Prometheus Operator
-            stack (ServiceMonitor) and/or a VictoriaMetrics operator stack
-            (VMServiceScrape). Metrics are opt-in and default to off.
-          properties:
-            enabled:
-              description: |-
-                Enabled turns on the MariaDB metrics exporter (mysqld-exporter). When
-                false or unset, no exporter is deployed and no scrape objects are
-                created. Defaults to false.
-              enum:
-                - true
-                - false
-                - "true"
-                - "false"
-            serviceMonitor:
-              description: |-
-                ServiceMonitor controls the creation of a Prometheus Operator
-                ServiceMonitor object that scrapes the exporter. Creating it requires the
-                ServiceMonitor CRD (monitoring.coreos.com) to be installed in the cluster.
-              properties:
-                enabled:
-                  description: |-
-                    Enabled controls whether a Prometheus ServiceMonitor is created for the
-                    exporter. Defaults to true while metrics are enabled, unless
-                    VictoriaMetrics is enabled, so the exporter is scraped once. When false,
-                    the ServiceMonitor CRD is not required and an existing ServiceMonitor is
-                    deleted.
-                  enum:
-                    - true
-                    - false
-                    - "true"
-                    - "false"
-                interval:
-                  description: Interval at which Prometheus scrapes the exporter (e.g. "10s").
-                  type: string
-                jobLabel:
-                  description: JobLabel is the label to use as the Prometheus job name for the target.
-                  type: string
-                prometheusRelease:
-                  description: |-
-                    PrometheusRelease is the value of the `release` label added to the
-                    ServiceMonitor so a Prometheus instance selecting on it picks the target up.
-                  type: string
-                scrapeTimeout:
-                  description: ScrapeTimeout is the timeout for a single scrape (e.g. "10s").
-                  type: string
-              type: object
-            victoriaMetrics:
-              description: |-
-                VictoriaMetrics controls the creation of a VictoriaMetrics operator
-                VMServiceScrape object that scrapes the exporter.
-              properties:
-                enabled:
-                  description: |-
-                    Enabled controls whether a VMServiceScrape is created for the exporter.
-                    Requires metrics to be enabled. It also turns the ServiceMonitor off
-                    unless serviceMonitor.enabled is set explicitly. Defaults to false.
-                  enum:
-                    - true
-                    - false
-                    - "true"
-                    - "false"
-                interval:
-                  description: |-
-                    Interval at which the exporter is scraped (e.g. "30s"). Defaults to the
-                    ServiceMonitor interval, or the VMAgent default when unset.
-                  type: string
-                scrapeTimeout:
-                  description: |-
-                    ScrapeTimeout is the timeout for a single scrape (e.g. "10s"). Defaults
-                    to the ServiceMonitor scrape timeout, or the VMAgent default when unset.
-                  type: string
-              type: object
-          type: object
-      type: mysqld-exporter
     proxy:
       parametersSchema:
         openAPIV3Schema:
@@ -173,6 +91,11 @@ spec:
           type: object
       type: maxscale
   defaultVersion: "12.3"
+  monitoring:
+    componentTypes:
+      mariadb:
+        kind: mariadb
+        metrics: Exporter
   release:
     version: 0.1.0
   topologies:
@@ -192,12 +115,6 @@ spec:
                     topologySpreadConstraints: {}
                 service: {}
                 storage: {}
-        monitoring:
-          optional: true
-          supportedFields:
-            openAPIV3Schema:
-              properties:
-                resources: {}
         proxy:
           optional: true
           supportedFields:
@@ -235,12 +152,6 @@ spec:
                     topologySpreadConstraints: {}
                 service: {}
                 storage: {}
-        monitoring:
-          optional: true
-          supportedFields:
-            openAPIV3Schema:
-              properties:
-                resources: {}
         proxy:
           optional: true
           supportedFields:
@@ -278,12 +189,6 @@ spec:
                     topologySpreadConstraints: {}
                 service: {}
                 storage: {}
-        monitoring:
-          optional: true
-          supportedFields:
-            openAPIV3Schema:
-              properties:
-                resources: {}
   uiSchema:
     galera:
       sections:
@@ -359,27 +264,6 @@ spec:
                 required: true
           description: Select the MariaDB version to deploy.
           label: Database Version
-        monitoring:
-          components:
-            enabled:
-              fieldParams:
-                defaultValue: false
-                helperText: Deploys the metrics exporter and a Prometheus ServiceMonitor. The ServiceMonitor requires the Prometheus Operator CRDs.
-                label: Enable metrics
-              path: spec.components.monitoring.parameters.enabled
-              uiType: toggle
-            victoriaMetrics:
-              fieldParams:
-                defaultValue: false
-                helperText: Creates a VMServiceScrape for the VictoriaMetrics operator instead of the ServiceMonitor. Requires metrics to be enabled.
-                label: VictoriaMetrics
-              path: spec.components.monitoring.parameters.victoriaMetrics.enabled
-              uiType: toggle
-          componentsOrder:
-            - enabled
-            - victoriaMetrics
-          description: Expose database metrics and integrate them with a Prometheus or VictoriaMetrics stack.
-          label: Monitoring
         proxy:
           components:
             enabled:
@@ -527,7 +411,6 @@ spec:
       sectionsOrder:
         - databaseVersion
         - resources
-        - monitoring
         - proxy
         - security
         - advanced
@@ -605,27 +488,6 @@ spec:
                 required: true
           description: Select the MariaDB version to deploy.
           label: Database Version
-        monitoring:
-          components:
-            enabled:
-              fieldParams:
-                defaultValue: false
-                helperText: Deploys the metrics exporter and a Prometheus ServiceMonitor. The ServiceMonitor requires the Prometheus Operator CRDs.
-                label: Enable metrics
-              path: spec.components.monitoring.parameters.enabled
-              uiType: toggle
-            victoriaMetrics:
-              fieldParams:
-                defaultValue: false
-                helperText: Creates a VMServiceScrape for the VictoriaMetrics operator instead of the ServiceMonitor. Requires metrics to be enabled.
-                label: VictoriaMetrics
-              path: spec.components.monitoring.parameters.victoriaMetrics.enabled
-              uiType: toggle
-          componentsOrder:
-            - enabled
-            - victoriaMetrics
-          description: Expose database metrics and integrate them with a Prometheus or VictoriaMetrics stack.
-          label: Monitoring
         proxy:
           components:
             enabled:
@@ -762,7 +624,6 @@ spec:
       sectionsOrder:
         - databaseVersion
         - resources
-        - monitoring
         - proxy
         - security
         - advanced
@@ -840,27 +701,6 @@ spec:
                 required: true
           description: Select the MariaDB version to deploy.
           label: Database Version
-        monitoring:
-          components:
-            enabled:
-              fieldParams:
-                defaultValue: false
-                helperText: Deploys the metrics exporter and a Prometheus ServiceMonitor. The ServiceMonitor requires the Prometheus Operator CRDs.
-                label: Enable metrics
-              path: spec.components.monitoring.parameters.enabled
-              uiType: toggle
-            victoriaMetrics:
-              fieldParams:
-                defaultValue: false
-                helperText: Creates a VMServiceScrape for the VictoriaMetrics operator instead of the ServiceMonitor. Requires metrics to be enabled.
-                label: VictoriaMetrics
-              path: spec.components.monitoring.parameters.victoriaMetrics.enabled
-              uiType: toggle
-          componentsOrder:
-            - enabled
-            - victoriaMetrics
-          description: Expose database metrics and integrate them with a Prometheus or VictoriaMetrics stack.
-          label: Monitoring
         resources:
           components:
             nodes:
@@ -962,27 +802,22 @@ spec:
       sectionsOrder:
         - databaseVersion
         - resources
-        - monitoring
         - security
         - advanced
   versions:
     - components:
         engine: "10.11"
-        monitoring: 0.15.1
         proxy: 23.08.13
       name: "10.11"
     - components:
         engine: "11.4"
-        monitoring: 0.15.1
         proxy: 23.08.13
       name: "11.4"
     - components:
         engine: "11.8"
-        monitoring: 0.15.1
         proxy: 23.08.13
       name: "11.8"
     - components:
         engine: "12.3"
-        monitoring: 0.15.1
         proxy: 23.08.13
       name: "12.3"

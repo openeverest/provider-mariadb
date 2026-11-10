@@ -28,12 +28,10 @@ import (
 )
 
 // The probes set one field at a time, and some fields only apply while another
-// one is enabled: proxy fields need spec.components.proxy.parameters.enabled,
-// and the VictoriaMetrics toggle needs metrics.
+// one is enabled: proxy fields need spec.components.proxy.parameters.enabled.
 var gatedPaths = map[string]string{
-	"spec.components.proxy.replicas":                                "applied only while the proxy is enabled",
-	"spec.components.proxy.service.serviceType":                     "applied only while the proxy is enabled",
-	"spec.components.monitoring.parameters.victoriaMetrics.enabled": "applied only while metrics are enabled",
+	"spec.components.proxy.replicas":            "applied only while the proxy is enabled",
+	"spec.components.proxy.service.serviceType": "applied only while the proxy is enabled",
 }
 
 func TestUISchemaIsReconciled(t *testing.T) {

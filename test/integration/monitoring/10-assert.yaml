@@ -1,38 +1,43 @@
-# Assert the Instance is accepted and the provider creates a MariaDB CR with
-# the monitoring component translated into spec.metrics.
-#
-# Chainsaw assertions are partial — only the fields listed here are checked.
-# The exporter image comes from versions.yaml (mysqld-exporter default: v0.15.1).
-# ServiceMonitor fields are passed through from the monitoring parameters.
-apiVersion: core.openeverest.io/v1alpha1
-kind: Instance
+# The prometheus entry resolves to ExtensionManaged because the mariadb
+# component type declares metrics: Exporter; its Configured condition belongs
+# to the class controller, which is not running here.
+apiVersion: monitoring.openeverest.io/v1alpha1
+kind: MonitoringBinding
 metadata:
-  name: test-instance-monitoring
+  labels:
+    core.openeverest.io/instance: test-instance-monitoring
+    monitoring.openeverest.io/entry: prometheus
+  ownerReferences:
+    - apiVersion: core.openeverest.io/v1alpha1
+      kind: Instance
+      name: test-instance-monitoring
 spec:
-  providerRef:
-    name: mariadb
+  instanceRef:
+    name: test-instance-monitoring
+  destinationRef:
+    name: prometheus-it
+  classRef:
+    name: prometheus-it
+  executionMode: ExtensionManaged
+status:
+  (conditions[?type == 'Accepted'].status | [0]): "True"
 ---
+# The class requires metrics, so the exporter is on. The class controller
+# creates the scrape objects, so the operator's ServiceMonitor stays off.
+# The exporter image comes from versions.yaml (mysqld-exporter default).
 apiVersion: k8s.mariadb.com/v1alpha1
 kind: MariaDB
 metadata:
   name: test-instance-monitoring
 spec:
   replicas: 1
-  podMetadata:
-    labels:
-      core.openeverest.io/component: engine
-      core.openeverest.io/instance: test-instance-monitoring
-      core.openeverest.io/provider: mariadb
   metrics:
     enabled: true
     exporter:
       image: prom/mysqld-exporter:v0.15.1
       podMetadata:
         labels:
-          core.openeverest.io/component: monitoring
           core.openeverest.io/instance: test-instance-monitoring
           core.openeverest.io/provider: mariadb
     serviceMonitor:
-      prometheusRelease: test
-      interval: 30s
-      scrapeTimeout: 10s
+      enabled: false

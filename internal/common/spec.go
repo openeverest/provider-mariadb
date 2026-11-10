@@ -8,9 +8,6 @@ const (
 	// ComponentEngine is the logical component name for the MariaDB engine.
 	ComponentEngine = "engine"
 
-	// ComponentMonitoring is the logical component name for metrics/monitoring.
-	ComponentMonitoring = "monitoring"
-
 	// ComponentProxy is the logical component name for the MaxScale proxy.
 	ComponentProxy = "proxy"
 

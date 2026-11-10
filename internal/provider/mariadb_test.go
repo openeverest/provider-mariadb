@@ -33,6 +33,7 @@ import (
 
 	commonv1alpha1 "github.com/openeverest/openeverest/v2/api/common/v1alpha1"
 	corev1alpha1 "github.com/openeverest/openeverest/v2/api/core/v1alpha1"
+	monitoringv1alpha1 "github.com/openeverest/openeverest/v2/api/monitoring/v1alpha1"
 	"github.com/openeverest/openeverest/v2/provider-runtime/controller"
 
 	"github.com/openeverest/provider-mariadb/internal/common"
@@ -52,6 +53,7 @@ func newSyncHarness(t *testing.T, topology string, components map[string]corev1a
 	scheme := runtime.NewScheme()
 	require.NoError(t, corev1.AddToScheme(scheme))
 	require.NoError(t, corev1alpha1.AddToScheme(scheme))
+	require.NoError(t, monitoringv1alpha1.AddToScheme(scheme))
 	require.NoError(t, mariadbv1alpha1.AddToScheme(scheme))
 
 	all := map[string]corev1alpha1.ComponentSpec{
@@ -72,7 +74,7 @@ func newSyncHarness(t *testing.T, topology string, components map[string]corev1a
 	cl := fake.NewClientBuilder().
 		WithScheme(scheme).
 		WithReturnManagedFields().
-		WithObjects(append([]client.Object{in}, objs...)...).
+		WithObjects(append([]client.Object{in, generatedProvider(t)}, objs...)...).
 		WithInterceptorFuncs(interceptor.Funcs{
 			Apply: func(ctx context.Context, cl client.WithWatch, obj runtime.ApplyConfiguration, opts ...client.ApplyOption) error {
 				data, err := json.Marshal(obj)
@@ -97,18 +99,14 @@ func (h *syncHarness) lastSpec(t *testing.T) map[string]any {
 	return spec
 }
 
-func monitoringComponent(enabled bool) map[string]corev1alpha1.ComponentSpec {
-	raw := `{"enabled":false}`
-	if enabled {
-		raw = `{"enabled":true}`
-	}
-	return map[string]corev1alpha1.ComponentSpec{
-		common.ComponentMonitoring: {
-			Type:       common.ComponentMonitoring,
-			Image:      "prom/mysqld-exporter:test",
-			Parameters: &runtime.RawExtension{Raw: []byte(raw)},
-		},
-	}
+// newMetricsSyncHarness is newSyncHarness for an Instance bound to a monitoring
+// class that requires metrics.
+func newMetricsSyncHarness(t *testing.T, topology string) *syncHarness {
+	t.Helper()
+	monitoring, objs := metricsMonitoring()
+	h := newSyncHarness(t, topology, nil, objs...)
+	h.Instance().Spec.Monitoring = monitoring
+	return h
 }
 
 func TestSyncMariaDB_Repeatable(t *testing.T) {
@@ -126,12 +124,12 @@ func TestSyncMariaDB_Repeatable(t *testing.T) {
 	assert.Equal(t, int32(5), mdb.Spec.Replicas)
 }
 
-func TestSyncMariaDB_StopsDeclaringMetricsWhenMonitoringDisabled(t *testing.T) {
-	h := newSyncHarness(t, "", monitoringComponent(true))
+func TestSyncMariaDB_StopsDeclaringMetricsWhenNoLongerRequired(t *testing.T) {
+	h := newMetricsSyncHarness(t, "")
 	require.NoError(t, SyncMariaDB(h.Context))
 	require.Contains(t, h.lastSpec(t), "metrics")
 
-	h.Instance().Spec.Components[common.ComponentMonitoring] = monitoringComponent(false)[common.ComponentMonitoring]
+	h.Instance().Spec.Monitoring = nil
 	require.NoError(t, SyncMariaDB(h.Context))
 	assert.NotContains(t, h.lastSpec(t), "metrics", "omitting spec.metrics makes the apply remove it")
 }
@@ -203,7 +201,7 @@ func TestDesiredMariaDB_NoTopologySpreadByDefault(t *testing.T) {
 }
 
 func TestSyncMariaDB_LabelsComponentPods(t *testing.T) {
-	h := newSyncHarness(t, "", monitoringComponent(true))
+	h := newMetricsSyncHarness(t, "")
 	require.NoError(t, SyncMariaDB(h.Context))
 
 	spec := h.lastSpec(t)
@@ -216,8 +214,11 @@ func TestSyncMariaDB_LabelsComponentPods(t *testing.T) {
 	}
 	assert.Equal(t, podLabels(common.ComponentEngine), spec["podMetadata"])
 	exporter := spec["metrics"].(map[string]any)["exporter"].(map[string]any)
-	assert.Equal(t, podLabels(common.ComponentMonitoring), exporter["podMetadata"])
-	assert.Equal(t, []string{common.ComponentEngine, common.ComponentMonitoring}, h.LabelledComponents())
+	assert.Equal(t, map[string]any{"labels": map[string]any{
+		"core.openeverest.io/instance": "test",
+		"core.openeverest.io/provider": common.ProviderName,
+	}}, exporter["podMetadata"])
+	assert.Equal(t, []string{common.ComponentEngine}, h.LabelledComponents())
 }
 
 func TestSyncMariaDB_KeepsDeclaringImmutableCreationFields(t *testing.T) {
@@ -271,7 +272,7 @@ func TestSyncMariaDB_MigratesLegacyFieldOwnership(t *testing.T) {
 func TestToApplyObject_OnlyDeclaresProviderFields(t *testing.T) {
 	for _, topology := range []string{"", "galera", "replication"} {
 		t.Run("topology="+topology, func(t *testing.T) {
-			h := newSyncHarness(t, topology, monitoringComponent(true))
+			h := newMetricsSyncHarness(t, topology)
 			desired, err := desiredMariaDB(h.Context)
 			require.NoError(t, err)
 			obj, err := toApplyObject(h.Context, desired)
