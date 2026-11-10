@@ -216,8 +216,10 @@ spec:
 
 The provider declares its monitoring contract in
 [definition/monitoring.yaml](definition/monitoring.yaml): a `mysqld-exporter`
-metrics endpoint for the `mariadb` component type (kind `mariadb`). It renders
-no operator-native integration such as PMM.
+metrics endpoint for the `mariadb` component type, whose kind (`mariadb`, the
+name monitoring classes match on) is declared in
+[definition/provider.yaml](definition/provider.yaml). It renders no
+operator-native integration such as PMM.
 
 - **Metrics backends** (for example the `prometheus` and `victoriametrics`
   classes) turn on the operator's `mysqld-exporter` (`spec.metrics`) while one

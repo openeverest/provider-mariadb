@@ -43,8 +43,8 @@ const (
 	// that pins the mysqld-exporter image.
 	metricsExporterComponentType = "mysqld-exporter"
 
-	// metricsKind is the engine kind of the mariadb component type, as
-	// declared in definition/monitoring.yaml.
+	// metricsKind is the kind of the mariadb component type, as declared in
+	// definition/provider.yaml.
 	metricsKind = "mariadb"
 
 	// metricsProbePath is the mysqld-exporter multi-target endpoint: it

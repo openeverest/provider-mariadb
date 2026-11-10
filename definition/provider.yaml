@@ -18,3 +18,10 @@ components:
   proxy:
     type: maxscale
     parametersSchema: MaxScaleParameters
+
+# Component types: the kind of the software each type runs, published as
+# Provider.spec.componentTypes.<type>.kind and matched by monitoring classes.
+# Version catalogs stay in versions.yaml.
+componentTypes:
+  mariadb:
+    kind: mariadb

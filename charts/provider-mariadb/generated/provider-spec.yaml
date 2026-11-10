@@ -4,6 +4,7 @@ spec:
   componentTypes:
     mariadb:
       defaultVersion: "12.3"
+      kind: mariadb
       versions:
         - image: mariadb:10.11
           version: "10.11"
@@ -94,7 +95,6 @@ spec:
   monitoring:
     componentTypes:
       mariadb:
-        kind: mariadb
         metrics: Exporter
   release:
     version: 0.1.0
