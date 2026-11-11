@@ -40,6 +40,26 @@ type MariadbParameters struct {
 	// default when this block or its enabled field is omitted.
 	// +optional
 	TLS *TLSParameters `json:"tls,omitempty"`
+	// Bootstrap configures where a new instance's data comes from.
+	// +optional
+	Bootstrap *BootstrapParameters `json:"bootstrap,omitempty"`
+}
+
+// BootstrapParameters configures the data a new instance starts with.
+type BootstrapParameters struct {
+	// VolumeSnapshot starts the instance from a VolumeSnapshot of another
+	// instance's data volume, in the same namespace. The snapshot must be
+	// annotated provider-mariadb.openeverest.io/bootstrap-instance with this
+	// instance's name. Only read when the instance is created.
+	// +optional
+	VolumeSnapshot *VolumeSnapshotSource `json:"volumeSnapshot,omitempty"`
+}
+
+// VolumeSnapshotSource names a VolumeSnapshot.
+type VolumeSnapshotSource struct {
+	// Name of the VolumeSnapshot.
+	// +kubebuilder:validation:MinLength=1
+	Name string `json:"name"`
 }
 
 // TLSParameters configures MariaDB transport encryption. Pointer booleans are

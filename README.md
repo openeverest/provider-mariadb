@@ -80,6 +80,7 @@ Stateful workloads additionally report:
 | Backups (scheduled) | ✅ | cron schedules per storage via `spec.backup` |
 | Restore | ✅ | logical backups are restored in place (same Instance only) or into a new Instance via `spec.dataSource`; physical backups are restored by seeding a new Instance from `spec.dataSource` |
 | Point-in-time recovery | ✅ | binary log archival on the `replication` topology; one storage may enable `pitr`; recover a new `replication` Instance to a target time via `spec.dataSource` (`PointInTime`) |
+| Start from a VolumeSnapshot | ✅ | `bootstrap.volumeSnapshot.name`: a new Instance from a snapshot of another instance's data volume, in seconds on copy-on-write storage; see [Start from a volume snapshot](#start-from-a-volume-snapshot) |
 
 ## Installation
 
@@ -356,6 +357,50 @@ The recovered Instance must use the `replication` topology: the engine only
 replays binary logs on replication clusters. The Instance reports `Restoring`
 until the binary logs are replayed up to the target, and `Failed` if the replay
 fails.
+
+### Start from a volume snapshot
+
+`bootstrap.volumeSnapshot.name` starts a new Instance from a VolumeSnapshot of
+another instance's data volume, in the same namespace, instead of an empty
+database. The operator creates every node's volume from the snapshot
+(`bootstrapFrom.volumeSnapshotRef`) and InnoDB recovers it as after a crash, so
+a snapshot of a running node is enough. On storage whose snapshots are
+copy-on-write clones, such as OpenEBS ZFS LocalPV, it's ready in under a minute
+whatever the size; the Branching plugin uses it to make instance branches.
+
+```yaml
+spec:
+  topology:
+    type: standalone
+  components:
+    engine:
+      type: mariadb
+      storage:
+        size: 20Gi                  # the snapshot's size: some drivers can't resize clones
+        storageClass: openebs-zfspv
+      parameters:
+        bootstrap:
+          volumeSnapshot:
+            name: orders-snapshot-1   # annotated bootstrap-instance: <this instance>
+```
+
+- The snapshot must be annotated
+  `provider-mariadb.openeverest.io/bootstrap-instance: <instance name>`.
+  Everest checks that a user may read an Instance's `spec.dataSource`, not its
+  engine parameters: the annotation, which Everest users can't set, is what
+  lets an Instance start from a snapshot. Without it the Instance is admitted
+  with a warning and reports the error, and nothing is created.
+- The data carries the source's users. The operator sets the new Instance's
+  own password on its user (`everest`). Root's password is in the data too:
+  the new Instance starts with the source's root password, copied from the
+  instance whose volume was snapshotted, then the provider replaces it with
+  a new one. A standalone node restarts once for that (its probes use the
+  password it started with); the Instance stays `Provisioning` until it runs
+  with the new password, so its connection details never carry the source's.
+- The snapshot is only read at creation and can't be changed afterwards, nor
+  combined with `spec.dataSource`.
+- A snapshot of a replication replica carries its replication settings:
+  reset them (`RESET REPLICA ALL`) on a standalone Instance made from it.
 
 ## Topologies
 

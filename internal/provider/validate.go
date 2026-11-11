@@ -64,6 +64,7 @@ func (p *MariaDBProvider) Validate(in controller.ValidationInput) controller.Val
 	errs = append(errs, validateTLS(instance)...)
 	errs = append(errs, validatePITR(instance)...)
 	errs = append(errs, validateDataSource(instance)...)
+	errs = append(errs, validateVolumeSnapshotBootstrap(instance, in.Old)...)
 	if _, ok := instance.Spec.Components[common.ComponentEngine]; ok && provisioned(in.Old) {
 		errs = append(errs, validateEngineChange(spec, instance, instanceEngineState(spec, in.Old))...)
 	}
@@ -71,7 +72,8 @@ func (p *MariaDBProvider) Validate(in controller.ValidationInput) controller.Val
 	return controller.ValidationResult{Errors: errs}
 }
 
-// ValidateReferences checks the VMServiceScrape CRD and the update against the deployed MariaDB.
+// ValidateReferences checks the VMServiceScrape CRD, the bootstrap VolumeSnapshot, and the update
+// against the deployed MariaDB.
 func (p *MariaDBProvider) ValidateReferences(c *controller.Context) (field.ErrorList, error) {
 	errs, err := validateVMServiceScrapeCRD(c)
 	if err != nil {
@@ -81,10 +83,16 @@ func (p *MariaDBProvider) ValidateReferences(c *controller.Context) (field.Error
 	mdb := &mariadbv1alpha1.MariaDB{}
 	if err := c.Get(mdb, c.Name()); err != nil {
 		if apierrors.IsNotFound(err) {
-			return errs, nil
+			snapErrs, err := validateVolumeSnapshotReference(c, nil)
+			return append(errs, snapErrs...), err
 		}
 		return nil, fmt.Errorf("get MariaDB: %w", err)
 	}
+	snapErrs, err := validateVolumeSnapshotReference(c, mdb)
+	if err != nil {
+		return nil, err
+	}
+	errs = append(errs, snapErrs...)
 	spec, err := c.ProviderSpec()
 	if err != nil {
 		return nil, fmt.Errorf("get provider spec: %w", err)

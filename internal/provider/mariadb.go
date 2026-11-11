@@ -94,7 +94,15 @@ func SyncMariaDB(c *controller.Context) error {
 		if err != nil {
 			return err
 		}
-		if bootstrap != nil {
+		snapshot, err := bootstrapSnapshot(c.Instance())
+		if err != nil {
+			return err
+		}
+		if snapshot != "" {
+			if bootstrap, err = resolveVolumeSnapshotBootstrap(c, snapshot); err != nil {
+				return err
+			}
+		} else if bootstrap != nil {
 			// The backup embeds the source's credentials; copy them so the
 			// operator does not generate mismatched passwords that would fail
 			// the probes and crash-loop the restored Pods.
@@ -121,7 +129,7 @@ func SyncMariaDB(c *controller.Context) error {
 	if err := c.Apply(obj); err != nil {
 		return fmt.Errorf("apply MariaDB: %w", err)
 	}
-	return nil
+	return rotateCopiedRootPassword(c)
 }
 
 // desiredMariaDB builds the MariaDB fields the provider owns from the Instance
@@ -345,6 +353,14 @@ func StatusMariaDB(c *controller.Context) (controller.Status, error) {
 		if !ds.Done {
 			return controller.Restoring(ds.Message), nil
 		}
+	}
+
+	// An instance started from a snapshot isn't handed out with its source's
+	// root password, nor right before its pods restart to replace it.
+	if pending, err := rootRotationPending(c, mariadbCR); err != nil {
+		return controller.Status{}, err
+	} else if pending {
+		return controller.Provisioning(rootRotationMessage), nil
 	}
 
 	// Check the Ready condition.
