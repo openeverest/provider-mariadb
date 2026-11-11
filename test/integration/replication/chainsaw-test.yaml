@@ -63,6 +63,14 @@ spec:
       try:
         - apply:
             file: 05-backupstorage.yaml
+        - assert:
+            resource:
+              apiVersion: backup.openeverest.io/v1alpha1
+              kind: BackupStorage
+              metadata:
+                name: seaweedfs-s3
+              status:
+                (conditions[?type == 'Accepted'].status | [0]): "True"
 
     - name: create-instance
       try:

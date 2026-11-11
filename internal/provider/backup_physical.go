@@ -32,16 +32,6 @@ import (
 	mariadbbackup "github.com/openeverest/provider-mariadb/definition/backupclasses/mariadb"
 )
 
-// buildPhysicalS3Storage wraps the resolved S3 spec in the operator's
-// PhysicalBackup storage type.
-func buildPhysicalS3Storage(c *controller.Context, storageName string) (mariadbv1alpha1.PhysicalBackupStorage, error) {
-	s3, err := buildOperatorS3(c, storageName, c.Name())
-	if err != nil {
-		return mariadbv1alpha1.PhysicalBackupStorage{}, err
-	}
-	return mariadbv1alpha1.PhysicalBackupStorage{S3: s3}, nil
-}
-
 // applyPhysicalBackupParameters applies the decoded parameters onto the operator
 // PhysicalBackup spec. Target defaults to PreferReplica (not the operator's own
 // Replica default) so single-node/standalone instances — which have no replica —
@@ -88,7 +78,7 @@ func syncPhysicalBackup(
 		// spec.mariaDbRef) and on-demand backups are run-once, so only populate
 		// it on creation (empty ResourceVersion means the object does not exist).
 		if opBackup.ResourceVersion == "" {
-			storage, err := buildPhysicalS3Storage(c, backup.Spec.StorageRef.Name)
+			s3, err := backupS3(c, backup)
 			if err != nil {
 				return err
 			}
@@ -96,7 +86,7 @@ func syncPhysicalBackup(
 				ObjectReference: mariadbv1alpha1.ObjectReference{Name: c.Name()},
 				WaitForIt:       true,
 			}
-			opBackup.Spec.Storage = storage
+			opBackup.Spec.Storage = mariadbv1alpha1.PhysicalBackupStorage{S3: s3}
 			applyPhysicalBackupParameters(&opBackup.Spec, params)
 		}
 		return controllerutil.SetControllerReference(backup, opBackup, c.Client().Scheme())
@@ -134,20 +124,18 @@ func cleanupPhysicalBackup(c *controller.Context, backup *backupv1alpha1.Backup)
 }
 
 // reconcileScheduledPhysicalBackup reconciles one operator PhysicalBackup CR
-// (with spec.schedule) for an InstanceBackupSchedule. It mirrors
+// (with spec.schedule) for an InstanceBackupSchedule, writing to s3. It mirrors
 // reconcileScheduledBackup but drives the PhysicalBackup CRD.
 func reconcileScheduledPhysicalBackup(
 	c *controller.Context,
 	mdb *mariadbv1alpha1.MariaDB,
 	storageName string,
+	s3 *mariadbv1alpha1.S3,
 	schedule *corev1alpha1.InstanceBackupSchedule,
 	name string,
 	params mariadbbackup.MariadbBackupParameters,
 ) error {
-	storage, err := buildPhysicalS3Storage(c, storageName)
-	if err != nil {
-		return err
-	}
+	storage := mariadbv1alpha1.PhysicalBackupStorage{S3: s3.DeepCopy()}
 	retention, err := deriveMaxRetention(schedule.Cron, schedule.Retention)
 	if err != nil {
 		return &controller.BackupConfigError{Reason: "InvalidSchedule", Message: err.Error()}
