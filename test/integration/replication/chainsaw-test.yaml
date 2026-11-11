@@ -190,6 +190,9 @@ spec:
     # Break a replica: while its replication is stopped, the primary purges the
     # binary logs it still needs, so restarting replication fails with error
     # 1236. The operator must rebuild it from a physical backup of the cluster.
+    # PURGE only notes, without failing, a binary log a dump thread still reads,
+    # such as the stopped replica's until the primary notices it left: retry it
+    # until the logs are gone and wait for the replica to report the error.
     - name: break-replica
       timeouts:
         exec: 3m
@@ -209,8 +212,25 @@ spec:
               sql "$replica" "STOP SLAVE;"
               sql "$primary" "INSERT INTO everest.scale_probe (id) VALUES (3); FLUSH BINARY LOGS;"
               current=$(sql "$primary" "SHOW MASTER STATUS;" | awk '{print $1}')
-              sql "$primary" "PURGE BINARY LOGS TO '${current}'; INSERT INTO everest.scale_probe (id) VALUES (4);"
+              oldest=""
+              for attempt in $(seq 1 30); do
+                sql "$primary" "PURGE BINARY LOGS TO '${current}';" || true
+                oldest=$(sql "$primary" "SHOW BINARY LOGS;" | awk 'NR==1{print $1}')
+                if [ "$oldest" = "$current" ]; then break; fi
+                echo "binary logs before ${current} still present (oldest ${oldest}), retrying"
+                sleep 2
+              done
+              [ "$oldest" = "$current" ] || { echo "could not purge binary logs before ${current}"; exit 1; }
+              sql "$primary" "INSERT INTO everest.scale_probe (id) VALUES (4);"
               sql "$replica" "START SLAVE;"
+              errno=""
+              for attempt in $(seq 1 30); do
+                errno=$(kubectl -n "$NAMESPACE" exec "$replica" -c mariadb -- env MYSQL_PWD="$rootpw" \
+                  mariadb -u root -se "SHOW SLAVE STATUS\G" 2>/dev/null | awk '/Last_IO_Errno:/{print $2}' || true)
+                if [ "$errno" = "1236" ]; then break; fi
+                sleep 2
+              done
+              [ "$errno" = "1236" ] || { echo "${replica} did not fail with error 1236 (Last_IO_Errno ${errno})"; exit 1; }
               kubectl -n "$NAMESPACE" create configmap broken-replica --from-literal=pod="$replica"
               echo "broke ${replica} (primary ${primary}, binlogs purged up to ${current})"
 
