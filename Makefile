@@ -6,9 +6,11 @@ $(LOCALBIN):
 # CONTAINER_TOOL defines the container tool to be used for building images.
 CONTAINER_TOOL ?= docker
 
-# OpenEverest ref to use for OpenEverest CRD installation. Pinned to the release
-# tag matching the core version in go.mod.
-OPENEVEREST_BRANCH ?= v2.0.0-dev.4
+# Commit of openeverest/openeverest pinned in go.mod (a tag or a pseudo-version).
+# CI builds the OpenEverest controller from it. Override it (e.g.
+# OPENEVEREST_REF=main) to build against another core ref.
+OPENEVEREST_REF ?= $(shell sed -n 's/.*"Hash":"\([0-9a-f]*\)".*/\1/p' \
+	"$$(go mod download -json github.com/openeverest/openeverest/v2 | sed -n 's/.*"Info": "\(.*\)",/\1/p')")
 
 # Image URL to use for building/pushing image targets
 IMG ?= ghcr.io/openeverest/provider-mariadb-dev:latest
@@ -191,16 +193,15 @@ load-image: ## Import the provider image (IMG) into the k3d cluster.
 load-openeverest-controller-image: ## Import the OpenEverest controller image into the k3d cluster.
 	k3d image import ${OPENEVEREST_CONTROLLER_IMG} -c ${K3D_CLUSTER_NAME}
 
+.PHONY: openeverest-ref
+openeverest-ref: ## Print the openeverest/openeverest ref to build the OpenEverest controller from (OPENEVEREST_REF).
+	@test -n "$(OPENEVEREST_REF)" || { echo "cannot resolve the openeverest/openeverest commit pinned in go.mod" >&2; exit 1; }
+	@echo $(OPENEVEREST_REF)
+
 .PHONY: install-crds
 install-crds: ## Install OpenEverest CRDs (and your operator's CRDs) into the cluster.
-	kubectl apply -f https://raw.githubusercontent.com/openeverest/openeverest/$(OPENEVEREST_BRANCH)/config/crd/bases/core.openeverest.io_providers.yaml
-	kubectl apply -f https://raw.githubusercontent.com/openeverest/openeverest/$(OPENEVEREST_BRANCH)/config/crd/bases/core.openeverest.io_instances.yaml
-	kubectl apply -f https://raw.githubusercontent.com/openeverest/openeverest/$(OPENEVEREST_BRANCH)/config/crd/bases/core.openeverest.io_instancepresets.yaml
-	kubectl apply -f https://raw.githubusercontent.com/openeverest/openeverest/$(OPENEVEREST_BRANCH)/config/crd/bases/monitoring.openeverest.io_monitoringconfigs.yaml
-	kubectl apply -f https://raw.githubusercontent.com/openeverest/openeverest/$(OPENEVEREST_BRANCH)/config/crd/bases/backup.openeverest.io_backupclasses.yaml
-	kubectl apply -f https://raw.githubusercontent.com/openeverest/openeverest/$(OPENEVEREST_BRANCH)/config/crd/bases/backup.openeverest.io_backups.yaml
-	kubectl apply -f https://raw.githubusercontent.com/openeverest/openeverest/$(OPENEVEREST_BRANCH)/config/crd/bases/backup.openeverest.io_restores.yaml
-	kubectl apply -f https://raw.githubusercontent.com/openeverest/openeverest/$(OPENEVEREST_BRANCH)/config/crd/bases/backup.openeverest.io_backupstorages.yaml
+	go mod download github.com/openeverest/openeverest/v2
+	kubectl apply --server-side --force-conflicts -f "$$(go list -m -f '{{.Dir}}' github.com/openeverest/openeverest/v2)/config/crd/bases"
 	# TODO: install your operator's CRDs, e.g.:
 	# curl -fsSL https://raw.githubusercontent.com/<org>/<operator>/v$(OPERATOR_VERSION)/deploy/crd.yaml | kubectl apply --server-side -f -
 
