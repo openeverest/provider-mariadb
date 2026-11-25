@@ -52,6 +52,12 @@ manages pods directly — all lifecycle work is delegated to the operator.
 | `0.2.x` | `>= 2.0.0` | `26.10.x` | `1.30` – `1.34` |
 | `0.1.x` | `>= 2.0.0` | `26.6.x` (≤ 0.1.5), `26.10.x` (≥ 0.1.6) | `1.30` – `1.34` |
 
+Each chart also names the OpenEverest it is built for, in the
+`openeverest.io/contract-version` annotation of its `Chart.yaml`, which
+`make generate` writes. A Helm install on an OpenEverest that does not serve that
+version fails, and a build applied any other way waits, unready, until OpenEverest
+serves it; see [Installation](#installation).
+
 ## Capabilities
 
 What you can do to a running instance through the `Instance` API. Upgrading the
@@ -104,6 +110,27 @@ helm install provider-mariadb \
   `Instance` reports the errors in its `Ready` condition. A missing object the
   `Instance` names, such as its user Secret, is never a reason to reject it:
   `kubectl` prints a warning, and the `Instance` reports it once created.
+- With Helm or Flux, the install fails, before anything is applied, when the
+  OpenEverest in the cluster does not serve the OpenEverest the chart is built
+  for, and the error names the OpenEverest it needs. Argo CD, and any tool that
+  applies pre-rendered manifests, renders the chart without reading the cluster,
+  so that check passes there. Whichever tool applies it, a new build of the
+  provider that the installed OpenEverest does not support stays alive but unready
+  until OpenEverest does, and a Warning Event on the `Provider` says why (see
+  [Troubleshooting](#troubleshooting)). Under the default `RollingUpdate`
+  strategy, the previous build, if any, keeps serving meanwhile.
+- To install anyway, set `compatibility.acknowledge.coreVersion` to the
+  OpenEverest version the cluster runs, which the error also names. The chart
+  writes it on the `Provider`, its `BackupClass` and the presets as
+  `openeverest.io/compatibility-acknowledged`, and the provider reads it on its
+  `Provider` at startup, so it lets a held build start too. It holds on that
+  release and on later ones that keep its contract, such as its patch releases,
+  and expires with the first OpenEverest release that changes the contract, which
+  is checked again.
+- The chart sets no annotation for any tool itself: `openeverest.annotations` adds
+  annotations to the `Provider`, its `BackupClass` and the presets, such as
+  `argocd.argoproj.io/sync-wave: "-1"` to have Argo CD apply them before the
+  provider's `Deployment` and the bundled operator.
 
 Upgrade and uninstall:
 
@@ -646,7 +673,7 @@ cluster you can reach. For local development we recommend [k3d](https://k3d.io) 
 
 ```bash
 make dev-up             # local k3d cluster + Tilt dev environment
-make generate           # RBAC, provider spec, Helm chart sync
+make generate           # RBAC, provider spec, Helm chart sync, OpenEverest stamp
 make run                # run the provider locally against the cluster
 make test-unit
 make test-integration   # chainsaw suites under test/integration/
@@ -661,8 +688,9 @@ cp dev/.env.example dev/.env   # set K8S_CONTEXT, and DOCKER_REGISTRY_URL for a 
 tilt up -f dev/Tiltfile
 ```
 
-`make help` lists every target. `make verify` fails when generated files are
-stale — run `make generate` and commit the result.
+`make help` lists every target. `make verify` fails when generated files are stale
+or the chart is not stamped with the OpenEverest the provider is built against —
+run `make generate` and commit the result.
 
 The provider contract (`Validate` / `Sync` / `Status` / `Cleanup`), RBAC
 markers, watches, code generation, and the backup/restore interfaces are
@@ -676,7 +704,7 @@ documented once for all providers in [PROVIDER_DEVELOPMENT.md](https://github.co
 | `internal/provider/` | `ProviderInterface` implementation, RBAC markers |
 | `internal/common/` | Component name constants |
 | `definition/` | Provider identity, component types, versions, topologies |
-| `charts/provider-mariadb/` | Helm chart (`generated/` is produced by `make generate`) |
+| `charts/provider-mariadb/` | Helm chart (`generated/`, the `Chart.yaml` stamp, `templates/_openeverest_contract.tpl` and `templates/openeverest-compat-check.yaml` are produced by `make generate`) |
 | `config/rbac/role.yaml` | Generated `ClusterRole` — do not edit |
 | `test/integration/` | Chainsaw suites |
 | `test/vars.sh` | Pinned operator and workload versions used by tests |
@@ -704,6 +732,7 @@ kubectl logs -n everest-system deploy/provider-mariadb -f
 | `Instance` stuck in `Creating` | `kubectl describe instance <name>` conditions, then the provider logs |
 | No `Provider` resource in the cluster | Is the chart installed? Check the provider deployment logs |
 | `Instance` ignored entirely | `spec.providerRef.name` must be `mariadb` |
+| New provider pod running but never `Ready` | It waits until the installed OpenEverest supports this build: the Warning Event in `kubectl describe provider mariadb` says why |
 | MariaDB resource created but no pods | Inspect the `MariaDB` custom resource status — the failure is upstream in the operator |
 
 ## Contributing
