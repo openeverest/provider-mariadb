@@ -33,6 +33,7 @@ import (
 	"k8s.io/utils/ptr"
 
 	corev1alpha1 "github.com/openeverest/openeverest/v2/api/core/v1alpha1"
+	"github.com/openeverest/openeverest/v2/contract"
 	"github.com/openeverest/openeverest/v2/provider-runtime/controller"
 
 	"github.com/openeverest/provider-mariadb/internal/common"
@@ -89,7 +90,7 @@ func buildMetrics(c *controller.Context) (*mariadbv1alpha1.MariadbMetrics, error
 			Image: image,
 			// Not c.PodLabels: the exporter is no component of the Instance.
 			PodMetadata: &mariadbv1alpha1.Metadata{Labels: map[string]string{
-				controller.ProviderLabel: common.ProviderName,
+				contract.ProviderLabel:   common.ProviderName,
 				controller.InstanceLabel: c.Name(),
 			}},
 		},
