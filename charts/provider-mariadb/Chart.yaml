@@ -27,3 +27,5 @@ dependencies:
     version: "26.10.2"
     repository: https://mariadb-operator.github.io/mariadb-operator
     condition: operatorCrds.enabled
+annotations:
+  openeverest.io/contract-version: "2.0.0-alpha.1.next"

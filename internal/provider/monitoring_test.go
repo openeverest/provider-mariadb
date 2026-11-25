@@ -40,6 +40,7 @@ import (
 	commonv1alpha1 "github.com/openeverest/openeverest/v2/api/common/v1alpha1"
 	corev1alpha1 "github.com/openeverest/openeverest/v2/api/core/v1alpha1"
 	monitoringv1alpha1 "github.com/openeverest/openeverest/v2/api/monitoring/v1alpha1"
+	"github.com/openeverest/openeverest/v2/contract"
 	"github.com/openeverest/openeverest/v2/provider-runtime/controller"
 
 	"github.com/openeverest/provider-mariadb/internal/common"
@@ -265,7 +266,7 @@ func TestBuildMetrics(t *testing.T) {
 	assert.True(t, metrics.Enabled)
 	assert.Equal(t, "prom/mysqld-exporter:v0.15.1", metrics.Exporter.Image, "the provider spec pins the exporter image")
 	assert.Equal(t, map[string]string{
-		controller.ProviderLabel: common.ProviderName,
+		contract.ProviderLabel:   common.ProviderName,
 		controller.InstanceLabel: "test",
 	}, metrics.Exporter.PodMetadata.Labels)
 	assert.Equal(t, ptr.To(false), metrics.ServiceMonitor.Enabled, "class controllers create the scrape objects")
