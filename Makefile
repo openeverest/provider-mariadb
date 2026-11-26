@@ -193,6 +193,10 @@ test-integration-tls: ## Run TLS (spec.parameters.tls) integration tests (instal
 test-integration-pitr: ## Run point-in-time recovery integration tests (deploys SeaweedFS).
 	. ./test/vars.sh && chainsaw test --config ./test/integration/.chainsaw.yaml ./test/integration/pitr
 
+.PHONY: test-integration-import
+test-integration-import: ## Run backup import (disaster recovery) integration tests (deploys SeaweedFS).
+	. ./test/vars.sh && chainsaw test --config ./test/integration/.chainsaw.yaml ./test/integration/import
+
 .PHONY: load-image
 load-image: ## Import the provider image (IMG) into the k3d cluster.
 	k3d image import ${IMG} -c ${K3D_CLUSTER_NAME}

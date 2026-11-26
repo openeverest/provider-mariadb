@@ -1,0 +1,14 @@
+# An in-place restore of an imported backup is rejected: seeding a new Instance
+# is the supported way to use it (__BACKUP__ is substituted by the test).
+apiVersion: backup.openeverest.io/v1alpha1
+kind: Restore
+metadata:
+  name: import-inplace
+spec:
+  instanceRef:
+    name: import-logical
+  dataSource:
+    type: Backup
+    backup:
+      backupRef:
+        name: __BACKUP__

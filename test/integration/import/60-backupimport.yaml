@@ -1,0 +1,10 @@
+# Discover the backups the deleted source Instance left in the storage.
+apiVersion: backup.openeverest.io/v1alpha1
+kind: BackupImport
+metadata:
+  name: import-source-backups
+spec:
+  classRef:
+    name: mariadb
+  storageRef:
+    name: import-s3

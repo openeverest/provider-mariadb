@@ -175,6 +175,16 @@ jobs:
       suite: pitr
     secrets: inherit
 
+  test-integration-import:
+    name: Integration / import
+    needs: [lint, build, verify]
+    uses: ./.github/workflows/integration-test.yaml
+    with:
+      openeverest_ref: ${{ github.event_name == 'schedule' && 'main' || inputs.openeverest_ref || '' }}
+      make_target: test-integration-import
+      suite: import
+    secrets: inherit
+
   test-integration-tls:
     name: Integration / tls
     needs: [lint, build, verify]

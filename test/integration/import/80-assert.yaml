@@ -1,0 +1,19 @@
+apiVersion: core.openeverest.io/v1alpha1
+kind: Instance
+metadata:
+  name: import-pitr
+status:
+  phase: Provisioned
+  (conditions[?type == 'Ready'].status | [0]): "True"
+  (conditions[?type == 'DataSourceReady']):
+    - status: "True"
+---
+# The operator replayed the archived binary logs of the imported stream.
+apiVersion: k8s.mariadb.com/v1alpha1
+kind: MariaDB
+metadata:
+  name: import-pitr
+status:
+  (conditions[?type == 'BinlogsReplayed']):
+    - status: "True"
+      reason: ReplayBinlogs

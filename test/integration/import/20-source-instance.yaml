@@ -1,0 +1,40 @@
+# The Instance whose backups are later imported: an async replication MariaDB
+# with PITR enabled, so its storage path holds physical base backups and
+# archived binary logs, plus an on-demand logical backup.
+apiVersion: core.openeverest.io/v1alpha1
+kind: Instance
+metadata:
+  name: import-source
+spec:
+  providerRef:
+    name: mariadb
+  topology:
+    type: replication
+  components:
+    engine:
+      type: mariadb
+      replicas: 2
+      resources:
+        limits:
+          cpu: "1"
+          memory: 1G
+        requests:
+          cpu: 250m
+          memory: 512M
+      storage:
+        size: 1Gi
+  backup:
+    enabled: true
+    classRef:
+      name: mariadb
+    storages:
+      - storageRef:
+          name: import-s3
+        pitr:
+          enabled: true
+        schedules:
+          - name: base
+            enabled: true
+            cron: "*/5 * * * *"
+            parameters:
+              type: physical

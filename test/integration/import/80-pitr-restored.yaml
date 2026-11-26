@@ -1,0 +1,43 @@
+# A new Instance recovered to a point in time (__TARGET__ is substituted by the
+# test) from the imported stream of the deleted source Instance. With no
+# source PointInTimeRecovery left, the provider recovers from the imported
+# physical backups and the binary logs archived next to them.
+apiVersion: core.openeverest.io/v1alpha1
+kind: Instance
+metadata:
+  name: import-pitr
+spec:
+  providerRef:
+    name: mariadb
+  dataSource:
+    type: PointInTime
+    pointInTime:
+      source:
+        instanceRef:
+          name: import-source
+        storageRef:
+          name: import-s3
+      recoveryTarget: date
+      date: __TARGET__
+  topology:
+    type: replication
+  components:
+    engine:
+      type: mariadb
+      replicas: 2
+      resources:
+        limits:
+          cpu: "1"
+          memory: 1G
+        requests:
+          cpu: 250m
+          memory: 512M
+      storage:
+        size: 1Gi
+  backup:
+    enabled: true
+    classRef:
+      name: mariadb
+    storages:
+      - storageRef:
+          name: import-s3

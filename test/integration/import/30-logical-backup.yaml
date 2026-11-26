@@ -1,0 +1,18 @@
+# An on-demand logical backup of the source. Retain keeps its file when the
+# Backup is deleted, as when an Instance and its Backups are lost.
+apiVersion: backup.openeverest.io/v1alpha1
+kind: Backup
+metadata:
+  name: source-logical
+spec:
+  origin:
+    type: Instance
+    instanceRef:
+      name: import-source
+  classRef:
+    name: mariadb
+  storageRef:
+    name: import-s3
+  deletionPolicy: Retain
+  parameters:
+    type: logical

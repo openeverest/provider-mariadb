@@ -81,6 +81,7 @@ Stateful workloads additionally report:
 | Backups (scheduled) | ✅ | cron schedules per storage via `spec.backup` |
 | Restore | ✅ | logical backups are restored in place (same Instance only) or into a new Instance via `spec.dataSource`; physical backups are restored by seeding a new Instance from `spec.dataSource` |
 | Point-in-time recovery | ✅ | binary log archival on the `replication` topology; one storage may enable `pitr`; recover a new `replication` Instance to a target time via `spec.dataSource` (`PointInTime`) |
+| Backup import | ✅ | a `BackupImport` turns the logical and physical backups found in a storage into external Backups, so a new Instance can be seeded from them, or recovered to a point in time, after the source Instance is gone; see [Disaster recovery](#disaster-recovery-importing-backups) |
 | Start from a VolumeSnapshot | ✅ | `bootstrap.volumeSnapshot.name`: a new Instance from a snapshot of another instance's data volume, in seconds on copy-on-write storage; see [Start from a volume snapshot](#start-from-a-volume-snapshot) |
 
 ## Installation
@@ -558,6 +559,52 @@ The recovered Instance must use the `replication` topology: the engine only
 replays binary logs on replication clusters. The Instance reports `Restoring`
 until the binary logs are replayed up to the target, and `Failed` if the replay
 fails.
+
+### Disaster recovery: importing backups
+
+Backup files outlive the Instance and the Backups that wrote them. To recover
+after they are gone (or in another cluster), point a `BackupStorage` at the
+same bucket and prefix and import it with a `BackupImport`:
+
+```yaml
+apiVersion: backup.openeverest.io/v1alpha1
+kind: BackupImport
+metadata:
+  name: recover-old-backups
+spec:
+  classRef:
+    name: mariadb
+  storageRef:
+    name: my-s3-storage
+```
+
+The provider lists the storage and creates an external `Backup` (deletion
+policy `Retain`) for every logical and physical backup file it finds, with the
+file's path, time, backup `type` and engine version. Archived binary logs are
+not Backups of their own. Backups in the runtime's
+`backups/<namespace>/<instance>/...` layout are labelled with the Instance and
+namespace they came from:
+
+```bash
+kubectl get backups -l backup.provider-mariadb.openeverest.io/source-instance=my-old-instance
+```
+
+Seed a new Instance from an imported Backup with `spec.dataSource` (type
+`Backup`), as from any other Backup. To recover to a point in time, use a
+`PointInTime` data source naming the old Instance and the storage: when that
+Instance's `PointInTimeRecovery` no longer exists, the provider recovers from
+its newest imported physical Backup at or before the target and replays the
+binary logs archived next to it (`replication` topology only).
+
+Physical backups, and the users of logical ones, bring the old Instance's
+accounts with them. Since the old credentials Secrets are gone too, create the
+new Instance's Secrets holding the old passwords before creating it:
+`everest-secrets-<new-instance>` (key `password`) and
+`everest-secrets-<new-instance>-root` (key `root-password`). The Instance
+reports which Secret is missing otherwise.
+
+An imported Backup cannot be restored in place with a `Restore`; seed a new
+Instance from it instead.
 
 ### Start from a volume snapshot
 
