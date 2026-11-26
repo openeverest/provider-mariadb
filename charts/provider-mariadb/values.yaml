@@ -222,14 +222,16 @@ operator:
   # Whether the operator should watch only its own namespace
   currentNamespaceOnly: false
   crds:
-    # Keep false: CRDs are managed by the separate operatorCrds subchart.
+    # Keep false: the operator CRDs are installed by this chart (operatorCrds).
     # WARNING: Setting true means all MariaDB instances are deleted on helm uninstall.
     enabled: false
 
 # =============================================================================
-# mariadb-operator-crds subchart values
-# Set enabled: true to install CRDs via this chart (recommended for fresh installs).
-# Set enabled: false when CRDs are already installed or managed externally.
+# mariadb-operator CRDs
+# enabled: true installs and upgrades the operator CRDs with this chart. They
+# carry helm.sh/resource-policy: keep, so helm uninstall leaves them, and every
+# MariaDB with them, in place.
+# Set enabled: false when the CRDs are installed or managed externally.
 # =============================================================================
 operatorCrds:
   enabled: true

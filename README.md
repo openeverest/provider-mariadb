@@ -112,7 +112,19 @@ helm upgrade provider-mariadb oci://ghcr.io/openeverest/charts/provider-mariadb 
 helm uninstall provider-mariadb --namespace everest-system
 ```
 
-Uninstalling the chart does **not** delete running `Instance` resources or their data.
+Uninstalling the chart does **not** delete running `Instance` resources, their
+databases or their data. The mariadb-operator CRDs carry
+`helm.sh/resource-policy: keep`, so the `MariaDB`, `MaxScale`, `Backup`,
+`PhysicalBackup` and `PointInTimeRecovery` resources stay in place, and
+reinstalling the chart with the same release name and namespace picks them up
+again. `helm upgrade` updates the CRDs.
+
+To remove everything, delete the `Instance` resources first, then the chart,
+then the CRDs:
+
+```bash
+kubectl get crd -o name | grep '\.k8s\.mariadb\.com$' | xargs kubectl delete
+```
 
 ## Usage
 
