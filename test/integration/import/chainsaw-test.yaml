@@ -391,3 +391,15 @@ spec:
             timeout: 3m
             for:
               deletion: {}
+
+    # Imported Backups outlive their BackupImport and keep the BackupStorage
+    # in use; delete them so the storage can be cleaned up. They are Retain,
+    # so the files stay in the bucket.
+    - name: delete-imported-backups
+      timeouts:
+        exec: 4m
+      try:
+        - script:
+            content: |
+              set -eu
+              kubectl -n "$NAMESPACE" delete backup --all --timeout=3m
