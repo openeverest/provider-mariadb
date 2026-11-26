@@ -237,8 +237,14 @@ spec:
               kubectl -n "$NAMESPACE" delete backup --all --timeout=4m
               kubectl -n "$NAMESPACE" delete secret everest-secrets-import-source \
                 everest-secrets-import-source-root --ignore-not-found
-              left=$(kubectl -n "$NAMESPACE" get backup,pointintimerecovery,physicalbackup -o name)
-              [ -z "$left" ] || { echo "left over: $left"; exit 1; }
+              # The operator objects are garbage collected after the Instance.
+              for attempt in $(seq 1 24); do
+                left=$(kubectl -n "$NAMESPACE" get backup,pointintimerecovery,physicalbackup -o name)
+                [ -z "$left" ] && exit 0
+                echo "waiting for: $left"
+                sleep 5
+              done
+              exit 1
 
     - name: import-backups
       timeouts:
