@@ -43,11 +43,21 @@ var (
 	_ controller.BackupWatcher      = (*MariaDBProvider)(nil)
 	_ controller.RestoreWatcher     = (*MariaDBProvider)(nil)
 	_ controller.BackupMirror       = (*MariaDBProvider)(nil)
+	_ controller.BackupImporter     = (*MariaDBProvider)(nil)
 )
 
 // MariaDBProvider implements controller.ProviderInterface for MariaDB via mariadb-operator.
 type MariaDBProvider struct {
 	controller.BaseProvider
+	// client reads the BackupStorage credentials a BackupImport lists the
+	// storage with; the runtime passes no client to ImportBackups.
+	client client.Client
+}
+
+// SetClient injects the Kubernetes client into the provider. Call it after
+// reconciler.New and before the reconciler starts.
+func (p *MariaDBProvider) SetClient(c client.Client) {
+	p.client = c
 }
 
 // New creates a new MariaDBProvider instance.

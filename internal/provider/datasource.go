@@ -91,7 +91,7 @@ func resolveBackupBootstrapFrom(
 			fmt.Sprintf("Waiting for source Backup %q to succeed", sourceBackup.Name))
 	}
 
-	sourceInstance := sourceBackup.Spec.Origin.InstanceRef.Name
+	sourceInstance := backupSourceInstance(sourceBackup)
 	// Logical and physical backups share the location; the operator only
 	// considers files of the requested content type.
 	s3, err := backupS3(c, sourceBackup)
@@ -109,11 +109,25 @@ func resolveBackupBootstrapFrom(
 		BackupContentType: contentType,
 	}
 	// Pin selection to the specific source backup: the operator matches the
-	// closest backup at or before this time.
-	if sourceBackup.Status.CompletedAt != nil {
+	// closest backup at or before this time. The file of a backup imported by
+	// its path is named after the time it started, which matches it exactly.
+	if namesBackupFile(sourceBackup) {
+		t := metav1.NewTime(sourceBackup.Spec.Origin.External.StartedAt.UTC())
+		bootstrap.TargetRecoveryTime = &t
+	} else if sourceBackup.Status.CompletedAt != nil {
 		bootstrap.TargetRecoveryTime = sourceBackup.Status.CompletedAt
 	}
 	return bootstrap, sourceInstance, nil
+}
+
+// backupSourceInstance returns the name of the Instance backup was taken
+// from: its origin Instance or, for an imported backup, the Instance its
+// storage path names. It is "" when that is unknown.
+func backupSourceInstance(backup *backupv1alpha1.Backup) string {
+	if ref := backup.Spec.Origin.InstanceRef; ref != nil {
+		return ref.Name
+	}
+	return backup.Labels[sourceInstanceLabel]
 }
 
 // resolvePointInTimeBootstrapFrom seeds a new Instance by restoring the source
@@ -145,11 +159,20 @@ func resolvePointInTimeBootstrapFrom(
 	pitrName := pitrCRName(sourceInstance)
 	pitr := &mariadbv1alpha1.PointInTimeRecovery{}
 	if err := c.Get(pitr, pitrName); err != nil {
-		if apierrors.IsNotFound(err) {
-			return nil, "", controller.WaitFor(
-				fmt.Sprintf("Waiting for source PointInTimeRecovery %q", pitrName))
+		if !apierrors.IsNotFound(err) {
+			return nil, "", fmt.Errorf("get source PointInTimeRecovery: %w", err)
 		}
-		return nil, "", fmt.Errorf("get source PointInTimeRecovery: %w", err)
+		// The source Instance is gone: recover from its stream as imported.
+		ref, err := importedPointInTimeRecovery(c, pit)
+		if err != nil {
+			return nil, "", err
+		}
+		if ref == nil {
+			return nil, "", controller.WaitFor(fmt.Sprintf(
+				"Waiting for source PointInTimeRecovery %q, or an imported physical Backup of Instance %q on storage %q",
+				pitrName, sourceInstance, pit.Source.StorageRef.Name))
+		}
+		pitrName = ref.Name
 	}
 
 	bootstrap := &mariadbv1alpha1.BootstrapFrom{
@@ -174,20 +197,23 @@ func resolvePointInTimeBootstrapFrom(
 // restored cluster must reuse the source credentials; otherwise the operator
 // would generate fresh random passwords and the liveness/readiness probes
 // (which authenticate as root) would fail, crash-looping the Pods. It is
-// idempotent — existing target Secrets are left untouched — and must run before
-// the CR is applied.
+// idempotent — existing target Secrets are left untouched, which is also how
+// the credentials of a source Instance that no longer exists are supplied — and
+// must run before the CR is applied. sourceInstance is "" when it is unknown.
 func ensureRestoreCredentials(c *controller.Context, sourceInstance string) error {
-	if err := copyInstanceSecret(c, rootSecretName(sourceInstance), rootSecretName(c.Name())); err != nil {
+	if err := copyInstanceSecret(c, sourceInstance, rootSecretName, rootPasswordSecretKey); err != nil {
 		return err
 	}
-	return copyInstanceSecret(c, userSecretName(sourceInstance), userSecretName(c.Name()))
+	return copyInstanceSecret(c, sourceInstance, userSecretName, userPasswordSecretKey)
 }
 
-// copyInstanceSecret creates dstName as a copy of srcName's data, owned by the
-// Instance so it is garbage-collected with it. Existing destinations are left
-// as-is. A missing source is treated as a terminal seeding failure since the
-// restored data cannot be authenticated without it.
-func copyInstanceSecret(c *controller.Context, srcName, dstName string) error {
+// copyInstanceSecret creates the Instance's credentials Secret secretName
+// names as a copy of the source Instance's, owned by the Instance so it is
+// garbage-collected with it. An existing destination is left as-is. A missing
+// source is a seeding failure, since the restored data cannot be authenticated
+// without it; it clears once the destination is created by hand.
+func copyInstanceSecret(c *controller.Context, sourceInstance string, secretName func(string) string, key string) error {
+	dstName := secretName(c.Name())
 	dst := &corev1.Secret{}
 	if err := c.Get(dst, dstName); err == nil {
 		return nil
@@ -195,14 +221,22 @@ func copyInstanceSecret(c *controller.Context, srcName, dstName string) error {
 		return fmt.Errorf("get target Secret %q: %w", dstName, err)
 	}
 
+	missing := func(reason string) error {
+		return &controller.DataSourceConfigError{
+			Reason: corev1alpha1.ReasonDataSourceFailed,
+			Message: fmt.Sprintf("%s; to seed from its backup, create Secret %q with key %q holding the "+
+				"password of the Instance the backup was taken from", reason, dstName, key),
+		}
+	}
+	if sourceInstance == "" {
+		return missing("the Instance the backup was taken from is unknown")
+	}
+	srcName := secretName(sourceInstance)
 	src := &corev1.Secret{}
 	if err := c.Get(src, srcName); err != nil {
 		if apierrors.IsNotFound(err) {
-			return &controller.DataSourceConfigError{
-				Reason: corev1alpha1.ReasonDataSourceFailed,
-				Message: fmt.Sprintf(
-					"source Instance credentials Secret %q not found; the source Instance may have been deleted", srcName),
-			}
+			return missing(fmt.Sprintf(
+				"source Instance credentials Secret %q not found; the source Instance may have been deleted", srcName))
 		}
 		return fmt.Errorf("get source Secret %q: %w", srcName, err)
 	}

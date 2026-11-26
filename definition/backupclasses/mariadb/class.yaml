@@ -6,6 +6,7 @@
 #
 # Fields:
 #   displayName/description: human-readable metadata.
+#   supportsImport: advertise backup import capability to BackupImport validation.
 #   backupStorageClasses: BackupStorageClasses the engine writes to, with their
 #     auth modes, the parameters it supports (parametersSchema narrows the
 #     storage class's schema) and the spec.tls settings it honours (tls).
@@ -26,7 +27,9 @@ description: |
   "logical" takes a mariadb-dump SQL dump (restored in place), while "physical"
   takes a mariadb-backup data-directory snapshot (restored by seeding a new
   Instance from spec.dataSource; in-place restore is not supported by the engine
-  for physical backups).
+  for physical backups). Backups already in a storage, such as those of a
+  deleted Instance, can be imported with a BackupImport.
+supportsImport: true
 backupStorageClasses:
   - name: s3
     authModes:

@@ -17,6 +17,7 @@ package provider
 import (
 	"encoding/json"
 	"fmt"
+	"path"
 
 	mariadbv1alpha1 "github.com/mariadb-operator/mariadb-operator/v26/api/v1alpha1"
 	"k8s.io/apimachinery/pkg/api/meta"
@@ -148,7 +149,9 @@ func backupStorageS3(c *controller.Context, name string) (*mariadbv1alpha1.S3, e
 
 // backupS3 renders the BackupStorage backup is kept in into the operator's S3
 // spec, pointing at the backup's data. A backup that records no location is
-// read from where its origin Instance writes its backups.
+// read from where its origin Instance writes its backups. The operator reads
+// a directory, so a backup imported with the path of its file is read from the
+// directory holding it.
 func backupS3(c *controller.Context, backup *backupv1alpha1.Backup) (*mariadbv1alpha1.S3, error) {
 	name := backup.Spec.StorageRef.Name
 	bs, err := c.BackupStorage(name)
@@ -159,7 +162,11 @@ func backupS3(c *controller.Context, backup *backupv1alpha1.Backup) (*mariadbv1a
 		return nil, err
 	}
 	location := c.BackupLocation(backup, bs)
-	if location == "" {
+	if namesBackupFile(backup) {
+		if location = path.Dir(location); location == "." {
+			location = ""
+		}
+	} else if location == "" {
 		ref := backup.Spec.Origin.InstanceRef
 		if ref == nil {
 			return nil, fmt.Errorf("backup %q records no location and has no origin instance", backup.Name)
@@ -297,6 +304,16 @@ func (p *MariaDBProvider) SyncRestore(
 			}, nil
 		}
 		return controller.RestoreExecutionStatus{}, fmt.Errorf("get source Backup: %w", err)
+	}
+
+	// An imported backup has no operator Backup to restore from, and was taken
+	// from an Instance whose accounts it would bring in.
+	if isImported(sourceBackup) {
+		return controller.RestoreExecutionStatus{
+			State: backupv1alpha1.RestoreStateFailed,
+			Message: "In-place restore of an imported backup is not supported; " +
+				"seed a new Instance from this Backup via spec.dataSource instead",
+		}, nil
 	}
 
 	// Physical backups can only be restored by seeding a brand-new Instance via
