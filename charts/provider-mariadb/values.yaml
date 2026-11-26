@@ -40,10 +40,12 @@ podAnnotations: {}
 podLabels: {}
 
 podSecurityContext:
-  # -- Run as non-root
+  # -- Run as non-root. The image sets USER 65532; no runAsUser or fsGroup here, so
+  # OpenShift's restricted-v2 SCC can assign IDs from the namespace range.
   runAsNonRoot: true
-  # -- Security context fsGroup
-  fsGroup: 65534
+  # -- Seccomp profile, required by the restricted Pod Security Standard
+  seccompProfile:
+    type: RuntimeDefault
 
 securityContext:
   # -- Disallow privilege escalation
@@ -56,8 +58,6 @@ securityContext:
   readOnlyRootFilesystem: true
   # -- Run as non-root user
   runAsNonRoot: true
-  # -- Run as user ID
-  runAsUser: 65534
 
 service:
   # -- Service type
@@ -221,6 +221,24 @@ operator:
   logLevel: INFO
   # Whether the operator should watch only its own namespace
   currentNamespaceOnly: false
+  # Security contexts for the operator, webhook and cert-controller pods. They meet
+  # the restricted Pod Security Standard and pin no UID/GID (the image sets
+  # USER 65532), so OpenShift's restricted-v2 SCC can assign IDs too.
+  podSecurityContext: &operatorPodSecurityContext
+    runAsNonRoot: true
+    seccompProfile:
+      type: RuntimeDefault
+  securityContext: &operatorSecurityContext
+    allowPrivilegeEscalation: false
+    capabilities:
+      drop:
+        - ALL
+  webhook:
+    podSecurityContext: *operatorPodSecurityContext
+    securityContext: *operatorSecurityContext
+  certController:
+    podSecurityContext: *operatorPodSecurityContext
+    securityContext: *operatorSecurityContext
   crds:
     # Keep false: CRDs are managed by the separate operatorCrds subchart.
     # WARNING: Setting true means all MariaDB instances are deleted on helm uninstall.
