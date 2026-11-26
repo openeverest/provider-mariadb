@@ -17,6 +17,7 @@ package provider
 import (
 	"context"
 	"testing"
+	"time"
 
 	mariadbv1alpha1 "github.com/mariadb-operator/mariadb-operator/v26/api/v1alpha1"
 	"github.com/stretchr/testify/assert"
@@ -25,6 +26,7 @@ import (
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
+	clientgoscheme "k8s.io/client-go/kubernetes/scheme"
 	"k8s.io/utils/ptr"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
@@ -242,4 +244,37 @@ func TestHoldDataPlaneUpdates(t *testing.T) {
 		require.NoError(t, cl.Get(context.Background(), client.ObjectKey{Namespace: "default", Name: name}, mdb))
 		assert.Equal(t, want, ptr.Deref(mdb.Spec.UpdateStrategy.AutoUpdateDataPlane, true), name)
 	}
+}
+
+func TestStopProvider(t *testing.T) {
+	scheme := runtime.NewScheme()
+	require.NoError(t, clientgoscheme.AddToScheme(scheme))
+	labels := map[string]string{"app.kubernetes.io/name": "provider-mariadb"}
+	deployment := func() *appsv1.Deployment {
+		return &appsv1.Deployment{
+			ObjectMeta: metav1.ObjectMeta{Name: "provider-mariadb", Namespace: providerNamespace},
+			Spec: appsv1.DeploymentSpec{
+				Replicas: ptr.To[int32](1),
+				Selector: &metav1.LabelSelector{MatchLabels: labels},
+			},
+		}
+	}
+	pod := &corev1.Pod{ObjectMeta: metav1.ObjectMeta{Name: "provider-mariadb-1", Namespace: providerNamespace, Labels: labels}}
+	otherPod := &corev1.Pod{ObjectMeta: metav1.ObjectMeta{Name: "operator-1", Namespace: providerNamespace}}
+
+	t.Run("scales the Deployment to zero", func(t *testing.T) {
+		cl := fake.NewClientBuilder().WithScheme(scheme).WithObjects(deployment(), otherPod).Build()
+		require.NoError(t, StopProvider(context.Background(), cl, providerNamespace, "provider-mariadb", time.Second))
+		got := &appsv1.Deployment{}
+		require.NoError(t, cl.Get(context.Background(), client.ObjectKey{Namespace: providerNamespace, Name: "provider-mariadb"}, got))
+		assert.Equal(t, int32(0), ptr.Deref(got.Spec.Replicas, 1))
+	})
+	t.Run("waits for the provider pods", func(t *testing.T) {
+		cl := fake.NewClientBuilder().WithScheme(scheme).WithObjects(deployment(), pod).Build()
+		require.Error(t, StopProvider(context.Background(), cl, providerNamespace, "provider-mariadb", 1500*time.Millisecond))
+	})
+	t.Run("no Deployment", func(t *testing.T) {
+		cl := fake.NewClientBuilder().WithScheme(scheme).Build()
+		require.NoError(t, StopProvider(context.Background(), cl, providerNamespace, "provider-mariadb", time.Second))
+	})
 }

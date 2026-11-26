@@ -7,8 +7,10 @@ import (
 	"flag"
 	"fmt"
 	"os"
+	"time"
 
 	"k8s.io/apimachinery/pkg/runtime"
+	clientgoscheme "k8s.io/client-go/kubernetes/scheme"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
@@ -26,12 +28,14 @@ func main() {
 	var admission bool
 	var preflightSpec string
 	var holdDataPlane bool
+	var stopDeployment string
 
 	flag.IntVar(&serverPort, "server-port", 8082, "The port for the provider HTTP server.")
 	flag.StringVar(&metricsBindAddress, "metrics-bind-address", ":8081", "The address the metrics endpoint binds to. Use 0 to disable.")
 	flag.BoolVar(&admission, "admission", true, "Serve the Instance admission webhook, with the serving certificate the chart mounts.")
 	flag.StringVar(&preflightSpec, "preflight-spec", "", "Run the upgrade preflight against the target Provider spec at this path and exit. Used by the chart's pre-upgrade hook.")
 	flag.BoolVar(&holdDataPlane, "hold-data-plane-updates", false, "With --preflight-spec, turn off automatic data-plane updates on every MariaDB once the preflight passes, before the operator is upgraded. Used by the chart's pre-upgrade hook.")
+	flag.StringVar(&stopDeployment, "stop-provider-deployment", "", "With --hold-data-plane-updates, first scale this provider Deployment in the POD_NAMESPACE namespace to zero, so a provider release before maintenance gating cannot turn the updates back on. Used by the chart's pre-upgrade hook.")
 	flag.Parse()
 
 	l := ctrl.Log.WithName("setup")
@@ -49,7 +53,7 @@ func main() {
 			os.Exit(1)
 		}
 		if holdDataPlane {
-			if err := holdDataPlaneUpdates(ctx, p); err != nil {
+			if err := holdDataPlaneUpdates(ctx, p, stopDeployment); err != nil {
 				fmt.Fprintln(os.Stderr, "upgrade preflight could not hold data-plane updates:", err)
 				os.Exit(1)
 			}
@@ -81,10 +85,14 @@ func main() {
 	}
 }
 
-// holdDataPlaneUpdates runs provider.HoldDataPlaneUpdates with a direct
-// client built from the in-cluster config.
-func holdDataPlaneUpdates(ctx context.Context, p *provider.MariaDBProvider) error {
+// holdDataPlaneUpdates runs provider.StopProvider, when given a Deployment, and
+// provider.HoldDataPlaneUpdates with a direct client built from the in-cluster
+// config.
+func holdDataPlaneUpdates(ctx context.Context, p *provider.MariaDBProvider, stopDeployment string) error {
 	scheme := runtime.NewScheme()
+	if err := clientgoscheme.AddToScheme(scheme); err != nil {
+		return err
+	}
 	if err := corev1alpha1.AddToScheme(scheme); err != nil {
 		return err
 	}
@@ -94,6 +102,11 @@ func holdDataPlaneUpdates(ctx context.Context, p *provider.MariaDBProvider) erro
 	cl, err := client.New(ctrl.GetConfigOrDie(), client.Options{Scheme: scheme})
 	if err != nil {
 		return fmt.Errorf("create the Kubernetes client: %w", err)
+	}
+	if stopDeployment != "" {
+		if err := provider.StopProvider(ctx, cl, os.Getenv("POD_NAMESPACE"), stopDeployment, 2*time.Minute); err != nil {
+			return err
+		}
 	}
 	return provider.HoldDataPlaneUpdates(ctx, cl)
 }

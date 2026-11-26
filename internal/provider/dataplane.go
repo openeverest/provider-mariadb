@@ -20,11 +20,15 @@ import (
 	"fmt"
 	"os"
 	"strings"
+	"time"
 
 	goversion "github.com/hashicorp/go-version"
 	mariadbv1alpha1 "github.com/mariadb-operator/mariadb-operator/v26/api/v1alpha1"
 	appsv1 "k8s.io/api/apps/v1"
+	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/util/wait"
 	"k8s.io/utils/ptr"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/log"
@@ -166,6 +170,43 @@ func versionLessThan(a, b string) bool {
 		return false
 	}
 	return va.LessThan(vb)
+}
+
+// StopProvider scales the provider Deployment to zero and waits until its pods
+// are gone. The chart's pre-upgrade hook runs it before HoldDataPlaneUpdates:
+// a running provider from a release before maintenance gating would turn
+// automatic data-plane updates back on at its next Sync. The upgrade restores
+// the replica count when it applies the new Deployment.
+func StopProvider(ctx context.Context, cl client.Client, namespace, name string, timeout time.Duration) error {
+	deployment := &appsv1.Deployment{}
+	err := cl.Get(ctx, client.ObjectKey{Namespace: namespace, Name: name}, deployment)
+	if apierrors.IsNotFound(err) {
+		return nil
+	}
+	if err != nil {
+		return fmt.Errorf("get the provider Deployment %s/%s: %w", namespace, name, err)
+	}
+	if ptr.Deref(deployment.Spec.Replicas, 1) != 0 {
+		patch := client.RawPatch(client.Merge.Type(), []byte(`{"spec":{"replicas":0}}`))
+		if err := cl.Patch(ctx, deployment, patch); err != nil {
+			return fmt.Errorf("scale down the provider Deployment %s/%s: %w", namespace, name, err)
+		}
+	}
+	selector, err := metav1.LabelSelectorAsSelector(deployment.Spec.Selector)
+	if err != nil {
+		return fmt.Errorf("provider Deployment %s/%s selector: %w", namespace, name, err)
+	}
+	err = wait.PollUntilContextTimeout(ctx, time.Second, timeout, true, func(ctx context.Context) (bool, error) {
+		pods := &corev1.PodList{}
+		if err := cl.List(ctx, pods, client.InNamespace(namespace), client.MatchingLabelsSelector{Selector: selector}); err != nil {
+			return false, err
+		}
+		return len(pods.Items) == 0, nil
+	})
+	if err != nil {
+		return fmt.Errorf("wait for the provider pods of %s/%s to stop: %w", namespace, name, err)
+	}
+	return nil
 }
 
 // HoldDataPlaneUpdates turns off updateStrategy.autoUpdateDataPlane on the

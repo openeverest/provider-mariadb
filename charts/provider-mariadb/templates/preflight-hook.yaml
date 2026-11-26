@@ -4,8 +4,10 @@
 # and the live Instances. A non-zero exit aborts the upgrade before any
 # resource is applied. Once the preflight passes, the Job turns off automatic
 # data-plane updates on every MariaDB, so the upgraded operator does not roll
-# the clusters before the provider holds the update for approval. Runs only on
-# `helm upgrade`, never on install.
+# the clusters before the provider holds the update for approval. It first
+# scales the running provider to zero: a release before maintenance gating
+# would turn the updates back on. The upgrade then restores the provider
+# Deployment. Runs only on `helm upgrade`, never on install.
 {{- $operatorVersion := "" }}
 {{- range .Chart.Dependencies }}
 {{- /* Helm rewrites a dependency's Name to its alias; mariadb-operator is aliased to "operator" */}}
@@ -59,6 +61,47 @@ rules:
   - apiGroups: ["k8s.mariadb.com"]
     resources: ["mariadbs"]
     verbs: ["get", "list", "patch"]
+---
+# Scales down the running provider before the data-plane updates are held.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: {{ include "provider-mariadb.fullname" . }}-preflight
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "provider-mariadb.labels" . | nindent 4 }}
+  annotations:
+    helm.sh/hook: pre-upgrade
+    helm.sh/hook-weight: "-5"
+    helm.sh/hook-delete-policy: before-hook-creation,hook-succeeded
+rules:
+  - apiGroups: ["apps"]
+    resources: ["deployments"]
+    resourceNames: [{{ include "provider-mariadb.fullname" . | quote }}]
+    verbs: ["get", "patch"]
+  - apiGroups: [""]
+    resources: ["pods"]
+    verbs: ["list"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: {{ include "provider-mariadb.fullname" . }}-preflight
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "provider-mariadb.labels" . | nindent 4 }}
+  annotations:
+    helm.sh/hook: pre-upgrade
+    helm.sh/hook-weight: "-5"
+    helm.sh/hook-delete-policy: before-hook-creation,hook-succeeded
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: {{ include "provider-mariadb.fullname" . }}-preflight
+subjects:
+  - kind: ServiceAccount
+    name: {{ include "provider-mariadb.fullname" . }}-preflight
+    namespace: {{ .Release.Namespace }}
 ---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRoleBinding
@@ -121,7 +164,12 @@ spec:
           args:
             - --preflight-spec=/preflight/provider-spec.yaml
             - --hold-data-plane-updates
+            - --stop-provider-deployment={{ include "provider-mariadb.fullname" . }}
           env:
+            - name: POD_NAMESPACE
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.namespace
             # The operator version this release installs, for the data-plane
             # skew check.
             - name: TARGET_OPERATOR_VERSION
