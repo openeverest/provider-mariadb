@@ -134,7 +134,10 @@ without approval. Standalone instances have no sidecars and are never held.
 A pre-upgrade hook checks every `Instance` before the chart is upgraded. It
 fails the upgrade when a cluster's sidecars are older than the new operator
 supports — approve the pending update and wait for it to finish, then retry —
-and warns about maintenance still waiting for approval.
+and warns about maintenance still waiting for approval. When the checks pass,
+it stops the running provider and turns off the operator's automatic sidecar
+updates before the new operator starts; the upgrade then starts the new
+provider.
 
 ## Usage
 
