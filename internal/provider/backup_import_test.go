@@ -363,7 +363,7 @@ func TestResolvePointInTimeBootstrapFromImport(t *testing.T) {
 		pitr := &mariadbv1alpha1.PointInTimeRecovery{}
 		require.NoError(t, c.Get(pitr, name))
 		assert.Equal(t, name, pitr.Spec.PhysicalBackupRef.Name)
-		assert.Equal(t, "team/backups/ns/src/uid-old/s3/binlog", pitr.Spec.S3.Prefix)
+		assert.Equal(t, "team/backups/ns/src/uid-old/s3/binlog", pitr.Spec.PointInTimeRecoveryStorage.S3.Prefix)
 		assert.Equal(t, "db", metav1.GetControllerOf(pitr).Name)
 	})
 
