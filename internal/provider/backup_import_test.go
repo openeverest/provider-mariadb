@@ -398,6 +398,44 @@ func TestResolvePointInTimeBootstrapFromImport(t *testing.T) {
 		assert.True(t, controller.IsWaitError(err))
 	})
 
+	fromNamespace := func(name, ns string, at time.Time) *backupv1alpha1.Backup {
+		file := "physicalbackup-" + at.Format(physicalBackupLayout) + ".xb"
+		b := importedBackupOf(name, backupTypePhysical, file, at)
+		b.Labels[sourceNamespaceLabel] = ns
+		b.Spec.Origin.External.Path = "backups/" + ns + "/src/uid-" + ns + "/s3/" + file
+		return b
+	}
+	latestBase := func(t *testing.T, objs ...client.Object) (string, error) {
+		t.Helper()
+		in := instanceSeededFromPITR(backupv1alpha1.RecoveryTargetLatest, nil)
+		c := newPITRContext(t, in, append([]client.Object{storage}, objs...)...)
+		if _, _, err := resolveBootstrapFrom(c); err != nil {
+			return "", err
+		}
+		physical := &mariadbv1alpha1.PhysicalBackup{}
+		require.NoError(t, c.Get(physical, importedPITRName("db")))
+		return physical.Spec.Storage.S3.Prefix, nil
+	}
+
+	t.Run("a same-named Instance of another namespace is ignored", func(t *testing.T) {
+		prefix, err := latestBase(t, newer, fromNamespace("later", "other", t2.Add(time.Hour)))
+		require.NoError(t, err)
+		assert.Equal(t, "team/backups/ns/src/uid-src/s3", prefix)
+	})
+
+	t.Run("the only other namespace is recovered from", func(t *testing.T) {
+		prefix, err := latestBase(t, fromNamespace("moved", "old-ns", t2))
+		require.NoError(t, err)
+		assert.Equal(t, "team/backups/old-ns/src/uid-old-ns/s3", prefix)
+	})
+
+	t.Run("several other namespaces are ambiguous", func(t *testing.T) {
+		_, err := latestBase(t, fromNamespace("a", "ns-a", t1), fromNamespace("b", "ns-b", t2))
+		var dsErr *controller.DataSourceConfigError
+		require.ErrorAs(t, err, &dsErr)
+		assert.Contains(t, dsErr.Message, "ns-a, ns-b")
+	})
+
 	t.Run("the source PITR CR is preferred while it exists", func(t *testing.T) {
 		in := instanceSeededFromPITR(backupv1alpha1.RecoveryTargetLatest, nil)
 		sourcePITR := &mariadbv1alpha1.PointInTimeRecovery{

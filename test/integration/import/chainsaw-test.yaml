@@ -253,7 +253,8 @@ spec:
         - script:
             content: |
               set -eu
-              sel=backup.provider-mariadb.openeverest.io/source-instance=import-source
+              # The storage may hold other runs' backups of a same-named Instance.
+              sel="backup.provider-mariadb.openeverest.io/source-instance=import-source,backup.provider-mariadb.openeverest.io/source-namespace=${NAMESPACE}"
               list=$(kubectl -n "$NAMESPACE" get backup -l "$sel" -o jsonpath='{range .items[*]}{.spec.origin.external.startedAt} {.spec.origin.external.sourceMetadata.backupType} {.metadata.name} {.status.state}{"\n"}{end}' | sort)
               echo "$list"
               logical=$(echo "$list" | awk '$2 == "logical" && $4 == "Succeeded" { print $3 }')

@@ -594,7 +594,10 @@ Seed a new Instance from an imported Backup with `spec.dataSource` (type
 `PointInTime` data source naming the old Instance and the storage: when that
 Instance's `PointInTimeRecovery` no longer exists, the provider recovers from
 its newest imported physical Backup at or before the target and replays the
-binary logs archived next to it (`replication` topology only).
+binary logs archived next to it (`replication` topology only). When the storage
+holds backups of same-named Instances from several namespaces, the new
+Instance's own namespace is used; recover in the namespace the old Instance ran
+in to avoid ambiguity.
 
 Physical backups, and the users of logical ones, bring the old Instance's
 accounts with them. Since the old credentials Secrets are gone too, create the

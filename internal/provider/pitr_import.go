@@ -18,7 +18,10 @@ import (
 	"crypto/sha1" //nolint:gosec // short, non-cryptographic name derivation
 	"encoding/hex"
 	"fmt"
+	"maps"
 	"path"
+	"slices"
+	"strings"
 
 	mariadbv1alpha1 "github.com/mariadb-operator/mariadb-operator/v26/api/v1alpha1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -101,6 +104,11 @@ func importedPointInTimeRecovery(
 // Instance on its storage that the target time recovers from: the latest one
 // started at or before the date, or the latest one for the "latest" target. It
 // returns nil when none is imported, and an error when none precedes the date.
+//
+// Instances of the same name in different namespaces may share a storage, and
+// their streams overlap in time, so only one namespace's backups are
+// considered: the Instance's own when it has any, otherwise the only one
+// there is. Several other namespaces are ambiguous and rejected.
 func importedPITRBase(
 	c *controller.Context,
 	pit *backupv1alpha1.DataSourcePointInTime,
@@ -109,8 +117,7 @@ func importedPITRBase(
 	if err := c.List(list, client.MatchingLabels{sourceInstanceLabel: pit.Source.InstanceRef.Name}); err != nil {
 		return nil, fmt.Errorf("list imported Backups: %w", err)
 	}
-	var base *backupv1alpha1.Backup
-	found := false
+	byNamespace := map[string][]*backupv1alpha1.Backup{}
 	for i := range list.Items {
 		b := &list.Items[i]
 		if !isImported(b) || b.Spec.StorageRef.Name != pit.Source.StorageRef.Name {
@@ -119,7 +126,27 @@ func importedPITRBase(
 		if params, err := parseBackupParams(rawParameters(b.Spec.Parameters)); err != nil || !isPhysical(params) {
 			continue
 		}
-		found = true
+		ns := b.Labels[sourceNamespaceLabel]
+		byNamespace[ns] = append(byNamespace[ns], b)
+	}
+	candidates, ok := byNamespace[c.Namespace()]
+	if !ok && len(byNamespace) > 1 {
+		namespaces := slices.Sorted(maps.Keys(byNamespace))
+		return nil, &controller.DataSourceConfigError{
+			Reason: corev1alpha1.ReasonDataSourceFailed,
+			Message: fmt.Sprintf("imported physical Backups of Instance %q on storage %q come from several namespaces (%s); "+
+				"recover in the namespace the source Instance ran in",
+				pit.Source.InstanceRef.Name, pit.Source.StorageRef.Name, strings.Join(namespaces, ", ")),
+		}
+	}
+	if !ok {
+		for _, backups := range byNamespace {
+			candidates = backups
+		}
+	}
+	var base *backupv1alpha1.Backup
+	found := len(candidates) > 0
+	for _, b := range candidates {
 		started := b.Spec.Origin.External.StartedAt
 		if pit.RecoveryTarget == backupv1alpha1.RecoveryTargetDate && started.After(pit.Date.Time) {
 			continue
