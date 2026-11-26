@@ -40,7 +40,7 @@ Source of truth: `internal/provider/`, `definition/`, [README](README.md#capabil
 | Restore — logical in place | ✅ | `SyncRestore` → operator `Restore` |
 | Restore — new Instance from backup | ✅ | logical and physical via `spec.dataSource` ([#93]); in-place restores only from the Instance's own backups |
 | PITR | ✅ | archival and recovery on the replication topology only (operator limitation, [#114]); success reported only after binlog replay ([#118]); re-creating a same-name Instance cannot archive ([#119]) |
-| Maintenance gating / provider upgrades | ❌ | [#95] |
+| Maintenance gating / provider upgrades | ✅ | sidecar updates held for approval, pre-upgrade skew check ([#95]); upgrade tests pending ([#78]) |
 | Instance deletion cleanup | ⚠️ | PVCs are orphaned ([#96]); backup data never purged ([#100]) |
 | `spec.userSecretRef` | ❌ | [#102] |
 | Backup import / DR from bucket | ❌ | [#101] |
@@ -68,7 +68,7 @@ Must be closed before the pre-alpha banner can be removed. Ordered by risk.
 |---|---|---|
 | ~~[#93]~~ | ✅ Seeding from a **logical** backup via `dataSource` | Fixed in #117 |
 | ~~[#94]~~ | ✅ Replication **scale-out** | Provider-managed replica template staged in the backup storage |
-| [#95] | **Maintenance gating** + `CheckUpgrade` | `autoUpdateDataPlane: true` rolls every cluster on provider upgrade without approval |
+| ~~[#95]~~ | ✅ **Maintenance gating** + `CheckUpgrade` | Sidecar updates wait for maintenance approval; a pre-upgrade hook blocks an unsupported version skew |
 | [#96] | **PVC lifecycle** on deletion | Orphaned volumes; same-name Instance reattaches stale datadir |
 | ~~[#97]~~ | ✅ **Validate** unsafe updates | Downgrades, storage shrink and StorageClass changes rejected |
 | ~~[#98]~~ | ✅ **Replica recovery** | Broken replicas rebuilt from the replica template |
@@ -116,7 +116,7 @@ Must be closed before the pre-alpha banner can be removed. Ordered by risk.
 
 ## 5. Suggested delivery order
 
-1. Safety for upgrades: #95, then #78 / #99 test coverage.
+1. Safety for upgrades: #78 / #99 test coverage (#95 done).
 2. Cleanup on deletion: #96, #119 (#93, #94, #97, #98, #118 done).
 3. Day-2: #100, #101, #103 + #92, #102, #104, #131.
 4. Nice-to-have items as demand appears.

@@ -3,6 +3,8 @@ module github.com/openeverest/provider-mariadb
 go 1.27.1
 
 require (
+	github.com/cert-manager/cert-manager v1.20.3
+	github.com/hashicorp/go-version v1.9.0
 	github.com/mariadb-operator/mariadb-operator/v26 v26.10.2
 	github.com/openeverest/openeverest/v2 v2.0.0-alpha.1
 	github.com/prometheus-operator/prometheus-operator/pkg/apis/monitoring v0.91.0
@@ -41,7 +43,6 @@ require (
 	github.com/aymanbagabas/go-osc52/v2 v2.0.1 // indirect
 	github.com/beorn7/perks v1.0.1 // indirect
 	github.com/blang/semver/v4 v4.0.0 // indirect
-	github.com/cert-manager/cert-manager v1.20.3 // indirect
 	github.com/cespare/xxhash/v2 v2.3.0 // indirect
 	github.com/charmbracelet/bubbles v1.0.0 // indirect
 	github.com/charmbracelet/bubbletea v1.3.10 // indirect
@@ -86,7 +87,6 @@ require (
 	github.com/google/gnostic-models v0.7.1 // indirect
 	github.com/google/uuid v1.6.0 // indirect
 	github.com/grpc-ecosystem/grpc-gateway/v2 v2.29.0 // indirect
-	github.com/hashicorp/go-version v1.9.0 // indirect
 	github.com/inconshreveable/mousetrap v1.1.0 // indirect
 	github.com/json-iterator/go v1.1.12 // indirect
 	github.com/klauspost/compress v1.19.2 // indirect

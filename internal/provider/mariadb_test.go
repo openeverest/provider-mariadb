@@ -23,6 +23,7 @@ import (
 	mariadbv1alpha1 "github.com/mariadb-operator/mariadb-operator/v26/api/v1alpha1"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
@@ -55,6 +56,7 @@ func newSyncHarness(t *testing.T, topology string, components map[string]corev1a
 	require.NoError(t, corev1alpha1.AddToScheme(scheme))
 	require.NoError(t, monitoringv1alpha1.AddToScheme(scheme))
 	require.NoError(t, mariadbv1alpha1.AddToScheme(scheme))
+	require.NoError(t, appsv1.AddToScheme(scheme))
 
 	all := map[string]corev1alpha1.ComponentSpec{
 		common.ComponentEngine: {Type: common.ComponentTypeMariaDB, Image: "mariadb:12.3"},
