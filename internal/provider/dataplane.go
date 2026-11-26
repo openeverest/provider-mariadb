@@ -37,7 +37,8 @@ import (
 
 // operatorImageRepo identifies the mariadb-operator image, independent of the
 // registry it is pulled from and the Helm release name its Deployment carries.
-// The operator's webhook and cert-controller run the same image.
+// The operator's webhook and cert-controller run the same image, with their
+// own image values, under a subcommand.
 const operatorImageRepo = "mariadb-operator/mariadb-operator"
 
 const inClusterNamespaceFile = "/var/run/secrets/kubernetes.io/serviceaccount/namespace"
@@ -62,8 +63,8 @@ var currentNamespace = func() (string, error) {
 }
 
 // operatorVersion returns the version of the running mariadb-operator, from
-// the image tag of its Deployments in the provider namespace. Deployments
-// with conflicting versions are an error rather than a coin flip.
+// the image tag of its Deployment in the provider namespace. Several operator
+// Deployments with conflicting versions are an error rather than a coin flip.
 func operatorVersion(c *controller.Context) (string, error) {
 	namespace, err := currentNamespace()
 	if err != nil {
@@ -77,7 +78,7 @@ func operatorVersion(c *controller.Context) (string, error) {
 	for _, d := range deployments.Items {
 		for _, container := range d.Spec.Template.Spec.Containers {
 			repo, tag := splitImage(container.Image)
-			if tag == "" || !strings.HasSuffix(repo, operatorImageRepo) {
+			if tag == "" || !strings.HasSuffix(repo, operatorImageRepo) || isOperatorSubcommand(container.Args) {
 				continue
 			}
 			if version != "" && version != tag {
@@ -90,6 +91,13 @@ func operatorVersion(c *controller.Context) (string, error) {
 		return "", errors.New("mariadb-operator deployment not found in namespace " + namespace)
 	}
 	return version, nil
+}
+
+// isOperatorSubcommand reports whether a container runs one of the operator
+// image's subcommands, such as webhook or cert-controller, rather than the
+// operator that reconciles MariaDB.
+func isOperatorSubcommand(args []string) bool {
+	return len(args) > 0 && !strings.HasPrefix(args[0], "-")
 }
 
 // splitImage splits an image reference into its repository and version tag.

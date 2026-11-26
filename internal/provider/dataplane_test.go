@@ -43,12 +43,12 @@ func withProviderNamespace(t *testing.T) {
 	t.Cleanup(func() { currentNamespace = orig })
 }
 
-func operatorDeployment(name, namespace, image string) *appsv1.Deployment {
+func operatorDeployment(name, namespace, image string, args ...string) *appsv1.Deployment {
 	return &appsv1.Deployment{
 		ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: namespace},
 		Spec: appsv1.DeploymentSpec{
 			Template: corev1.PodTemplateSpec{Spec: corev1.PodSpec{
-				Containers: []corev1.Container{{Name: "controller", Image: image}},
+				Containers: []corev1.Container{{Name: "controller", Image: image, Args: args}},
 			}},
 		},
 	}
@@ -73,7 +73,7 @@ func dataPlaneMariaDB(topology, version string) *mariadbv1alpha1.MariaDB {
 
 func TestSplitImage(t *testing.T) {
 	tests := map[string][2]string{
-		"ghcr.io/mariadb-operator/mariadb-operator:26.10.2":            {"ghcr.io/mariadb-operator/mariadb-operator", "26.10.2"},
+		"ghcr.io/mariadb-operator/mariadb-operator:26.10.2":             {"ghcr.io/mariadb-operator/mariadb-operator", "26.10.2"},
 		"reg.example.com:5000/mariadb-operator/mariadb-operator:v26.10": {"reg.example.com:5000/mariadb-operator/mariadb-operator", "26.10"},
 		"mariadb-operator/mariadb-operator:26.10.2@sha256:abc":          {"mariadb-operator/mariadb-operator", "26.10.2"},
 		"reg.example.com:5000/mariadb-operator/mariadb-operator":        {"reg.example.com:5000/mariadb-operator/mariadb-operator", ""},
@@ -94,13 +94,14 @@ func TestOperatorVersion(t *testing.T) {
 		wantErr bool
 	}{
 		{
-			name: "operator, webhook and cert-controller agree",
+			name: "webhook and cert-controller do not count",
 			objs: []client.Object{
 				operatorDeployment("provider-mariadb", providerNamespace, "ghcr.io/openeverest/provider-mariadb:0.4.0"),
-				operatorDeployment("mariadb-operator", providerNamespace, "ghcr.io/mariadb-operator/mariadb-operator:26.10.2"),
-				operatorDeployment("mariadb-operator-webhook", providerNamespace, "ghcr.io/mariadb-operator/mariadb-operator:26.10.2"),
+				operatorDeployment("mariadb-operator", providerNamespace, "ghcr.io/mariadb-operator/mariadb-operator:26.10.1", "--metrics-addr=:8080"),
+				operatorDeployment("mariadb-operator-webhook", providerNamespace, "ghcr.io/mariadb-operator/mariadb-operator:26.10.2", "webhook", "--port=9443"),
+				operatorDeployment("mariadb-operator-cert-controller", providerNamespace, "ghcr.io/mariadb-operator/mariadb-operator:26.10.2", "cert-controller"),
 			},
-			want: "26.10.2",
+			want: "26.10.1",
 		},
 		{
 			name: "only the provider namespace counts",
@@ -111,10 +112,10 @@ func TestOperatorVersion(t *testing.T) {
 			want: "26.10.2",
 		},
 		{
-			name: "conflicting versions",
+			name: "conflicting operators",
 			objs: []client.Object{
 				operatorDeployment("mariadb-operator", providerNamespace, "ghcr.io/mariadb-operator/mariadb-operator:26.10.2"),
-				operatorDeployment("mariadb-operator-webhook", providerNamespace, "ghcr.io/mariadb-operator/mariadb-operator:26.10.1"),
+				operatorDeployment("mariadb-operator-2", providerNamespace, "ghcr.io/mariadb-operator/mariadb-operator:26.10.1"),
 			},
 			wantErr: true,
 		},
