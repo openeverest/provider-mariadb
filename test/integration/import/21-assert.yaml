@@ -1,0 +1,7 @@
+apiVersion: core.openeverest.io/v1alpha1
+kind: Instance
+metadata:
+  name: import-source
+status:
+  phase: Provisioned
+  (conditions[?type == 'Ready'].status | [0]): "True"

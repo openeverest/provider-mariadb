@@ -57,7 +57,8 @@ spec:
     "logical" takes a mariadb-dump SQL dump (restored in place), while "physical"
     takes a mariadb-backup data-directory snapshot (restored by seeding a new
     Instance from spec.dataSource; in-place restore is not supported by the engine
-    for physical backups).
+    for physical backups). Backups already in a storage, such as those of a
+    deleted Instance, can be imported with a BackupImport.
   displayName: MariaDB backup
   executionMode: ProviderManaged
   parametersSchema:
@@ -126,6 +127,7 @@ spec:
         options yet; the struct is intentionally empty and ships an empty schema
         until requirements crystallize.
       type: object
+  supportsImport: true
   uiSchema:
     backup:
       components:

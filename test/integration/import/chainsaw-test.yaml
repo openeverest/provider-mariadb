@@ -1,0 +1,412 @@
+---
+# Backup import (disaster recovery) suite.
+#
+# End-to-end proof that the backups an Instance left in a storage can be
+# imported with a BackupImport once the Instance and its Backups are gone, and
+# that new Instances can be seeded from them:
+#   1. Deploy SeaweedFS (S3) and a BackupStorage with a prefix of its own.
+#   2. Provision a replication source with PITR enabled (physical base backups
+#      + binary log archival), write row 42 and take a logical backup.
+#   3. Write row 43, record the server time as the recovery target, write row
+#      44, and wait until binary log archival covers the target.
+#   4. Keep the source's passwords in Secrets named after the Instances to be
+#      seeded, then delete the source Instance and every Backup.
+#   5. Import the storage with a BackupImport: an external Backup per logical
+#      and physical backup file, labelled with the source Instance.
+#   6. Seed new Instances from the imported logical and physical backups,
+#      check an in-place restore of an imported backup is rejected, and
+#      recover a new Instance to the target from the imported stream.
+apiVersion: chainsaw.kyverno.io/v1alpha1
+kind: Test
+metadata:
+  name: import
+spec:
+  description: |
+    Disaster recovery from imported backups: delete a PITR-enabled source
+    Instance and its Backups, import its storage with a BackupImport, then seed
+    new Instances from the imported logical and physical backups and recover one
+    to a point in time from the imported binary log stream.
+
+  catch:
+    - script:
+        content: kubectl -n $NAMESPACE get instance,backup,backupimport,restore,mariadb,pointintimerecovery,physicalbackup,pods -o wide
+    - script:
+        content: kubectl -n $NAMESPACE get backupimport,backup,pointintimerecovery,physicalbackup,mariadb -o yaml
+    - script:
+        content: |
+          ns=$(kubectl get deploy -A -l app.kubernetes.io/name=provider-mariadb \
+            -o jsonpath='{.items[0].metadata.namespace}')
+          [ -n "$ns" ] && kubectl -n "$ns" logs -l app.kubernetes.io/name=provider-mariadb \
+            --all-containers --tail 200 || echo "provider deployment not found"
+
+  steps:
+    - name: provider-deployed
+      try:
+        - script:
+            content: |
+              set -eu
+              avail=$(kubectl get deploy -A -l app.kubernetes.io/name=provider-mariadb \
+                -o jsonpath='{.items[*].status.availableReplicas}')
+              echo "provider available replicas: ${avail:-0}"
+              echo "${avail}" | grep -q '[1-9]'
+
+    # Deploy the shared SeaweedFS (idempotent); it pre-creates the backup bucket.
+    - name: setup-seaweedfs
+      timeouts:
+        exec: 4m
+      try:
+        - script:
+            content: |
+              set -eu
+              kubectl apply -f "${PROVIDER_ROOT_PATH}/dev/resources/seaweedfs.yaml"
+              kubectl -n seaweedfs rollout status deploy/seaweedfs --timeout=180s
+
+    - name: backup-storage
+      try:
+        - apply:
+            file: 10-backupstorage.yaml
+        - assert:
+            resource:
+              apiVersion: backup.openeverest.io/v1alpha1
+              kind: BackupStorage
+              metadata:
+                name: import-s3
+              status:
+                (conditions[?type == 'Accepted'].status | [0]): "True"
+        # The mariadb BackupClass advertises import support.
+        - assert:
+            resource:
+              apiVersion: backup.openeverest.io/v1alpha1
+              kind: BackupClass
+              metadata:
+                name: mariadb
+              spec:
+                supportsImport: true
+              status:
+                (conditions[?type == 'Accepted'].status | [0]): "True"
+
+    - name: source-instance
+      try:
+        - apply:
+            file: 20-source-instance.yaml
+        - assert:
+            file: 20-assert.yaml
+
+    - name: source-running
+      timeouts:
+        assert: 10m
+      try:
+        - assert:
+            file: 21-assert.yaml
+
+    # Write row 42 as root via the primary pod's local socket, retrying to ride
+    # out the rolling update that wires PITR. FLUSH BINARY LOGS forces the
+    # write into an archived binlog.
+    - name: seed-data
+      timeouts:
+        exec: 12m
+      try:
+        - script:
+            content: |
+              set -eu
+              rootpw=$(kubectl -n "$NAMESPACE" get secret everest-secrets-import-source-root \
+                -o jsonpath='{.data.root-password}' | base64 -d)
+              ok=0
+              for attempt in $(seq 1 40); do
+                primary=$(kubectl -n "$NAMESPACE" get pod -l 'app.kubernetes.io/instance=import-source,k8s.mariadb.com/role=primary' \
+                  -o jsonpath='{.items[0].metadata.name}' 2>/dev/null || true)
+                if [ -n "$primary" ] && kubectl -n "$NAMESPACE" exec "$primary" -c mariadb -- \
+                  env MYSQL_PWD="$rootpw" mariadb -u root -e \
+                  "CREATE TABLE IF NOT EXISTS everest.import_probe (id INT PRIMARY KEY); INSERT INTO everest.import_probe (id) VALUES (42) ON DUPLICATE KEY UPDATE id=id; FLUSH BINARY LOGS;"; then
+                  echo "seeded via ${primary}"
+                  ok=1; break
+                fi
+                echo "seed attempt ${attempt} failed (primary not ready?); retrying in 15s..."
+                sleep 15
+              done
+              [ "$ok" = 1 ]
+
+    - name: logical-backup
+      timeouts:
+        assert: 10m
+      try:
+        - apply:
+            file: 30-logical-backup.yaml
+        - assert:
+            file: 30-assert.yaml
+
+    # Archival runs every 10 minutes and the rolling update that wires PITR
+    # restarts its timer, so allow two cycles.
+    - name: recovery-window-available
+      timeouts:
+        assert: 25m
+      try:
+        - assert:
+            file: 40-assert.yaml
+
+    # Rows 43 and 44 are written between two base backups (every 5 minutes),
+    # around the recovery target, so only replaying the imported binary logs
+    # brings back row 43. Times come from the server clock.
+    - name: write-around-target
+      timeouts:
+        exec: 8m
+      try:
+        - script:
+            content: |
+              set -eu
+              rootpw=$(kubectl -n "$NAMESPACE" get secret everest-secrets-import-source-root \
+                -o jsonpath='{.data.root-password}' | base64 -d)
+              primary=$(kubectl -n "$NAMESPACE" get pod -l 'app.kubernetes.io/instance=import-source,k8s.mariadb.com/role=primary' \
+                -o jsonpath='{.items[0].metadata.name}')
+              sql() {
+                kubectl -n "$NAMESPACE" exec "$primary" -c mariadb -- \
+                  env MYSQL_PWD="$rootpw" mariadb -u root -Nse "$1"
+              }
+              while :; do
+                offset=$(sql "SELECT MOD(UNIX_TIMESTAMP(), 300);")
+                if [ "$offset" -ge 60 ] && [ "$offset" -lt 240 ]; then break; fi
+                sleep 10
+              done
+              sql "INSERT INTO everest.import_probe (id) VALUES (43);"
+              sleep 3
+              target=$(sql "SELECT DATE_FORMAT(UTC_TIMESTAMP(), '%Y-%m-%dT%H:%i:%sZ');")
+              sleep 3
+              sql "INSERT INTO everest.import_probe (id) VALUES (44); FLUSH BINARY LOGS;"
+              kubectl -n "$NAMESPACE" create configmap import-target --from-literal=target="$target"
+              echo "recovery target: $target"
+
+    - name: target-archived
+      timeouts:
+        exec: 20m
+      try:
+        - script:
+            content: |
+              set -eu
+              target=$(kubectl -n "$NAMESPACE" get configmap import-target -o jsonpath='{.data.target}')
+              for attempt in $(seq 1 75); do
+                latest=$(kubectl -n "$NAMESPACE" get instance import-source \
+                  -o jsonpath='{.status.backup.storages[0].pitr.latestRestorableTime}')
+                echo "latestRestorableTime=${latest:-<none>} target=${target}"
+                if [ -n "$latest" ] && awk -v a="$latest" -v b="$target" 'BEGIN { exit !(a > b) }'; then
+                  exit 0
+                fi
+                sleep 15
+              done
+              exit 1
+
+    # Physical backups, and logical ones taken without ignoreGlobalPriv, carry
+    # the source's accounts. With the source gone, its passwords are supplied
+    # in the credentials Secrets of the Instances to be seeded.
+    - name: keep-credentials
+      try:
+        - script:
+            content: |
+              set -eu
+              rootpw=$(kubectl -n "$NAMESPACE" get secret everest-secrets-import-source-root \
+                -o jsonpath='{.data.root-password}' | base64 -d)
+              userpw=$(kubectl -n "$NAMESPACE" get secret everest-secrets-import-source \
+                -o jsonpath='{.data.password}' | base64 -d)
+              for target in import-logical import-physical import-pitr; do
+                kubectl -n "$NAMESPACE" create secret generic "everest-secrets-${target}-root" \
+                  --from-literal=root-password="$rootpw"
+                kubectl -n "$NAMESPACE" create secret generic "everest-secrets-${target}" \
+                  --from-literal=password="$userpw"
+              done
+
+    # Lose the source: the Instance, its Backups and its credentials. The files
+    # stay in the storage.
+    - name: delete-source
+      timeouts:
+        exec: 6m
+      try:
+        - delete:
+            ref:
+              apiVersion: core.openeverest.io/v1alpha1
+              kind: Instance
+              name: import-source
+        - wait:
+            apiVersion: k8s.mariadb.com/v1alpha1
+            kind: MariaDB
+            name: import-source
+            timeout: 5m
+            for:
+              deletion: {}
+        - script:
+            content: |
+              set -eu
+              kubectl -n "$NAMESPACE" delete backup --all --timeout=4m
+              kubectl -n "$NAMESPACE" delete secret everest-secrets-import-source \
+                everest-secrets-import-source-root --ignore-not-found
+              # The operator objects are garbage collected after the Instance.
+              for attempt in $(seq 1 24); do
+                left=$(kubectl -n "$NAMESPACE" get backup,pointintimerecovery,physicalbackup -o name)
+                [ -z "$left" ] && exit 0
+                echo "waiting for: $left"
+                sleep 5
+              done
+              exit 1
+
+    - name: import-backups
+      timeouts:
+        assert: 3m
+      try:
+        - apply:
+            file: 60-backupimport.yaml
+        - assert:
+            file: 60-assert.yaml
+        # One Backup per file, labelled with the deleted source; pick the
+        # logical backup and the latest physical one to seed from.
+        - script:
+            content: |
+              set -eu
+              # The storage may hold other runs' backups of a same-named Instance.
+              sel="backup.provider-mariadb.openeverest.io/source-instance=import-source,backup.provider-mariadb.openeverest.io/source-namespace=${NAMESPACE}"
+              list=$(kubectl -n "$NAMESPACE" get backup -l "$sel" -o jsonpath='{range .items[*]}{.spec.origin.external.startedAt} {.spec.origin.external.sourceMetadata.backupType} {.metadata.name} {.status.state}{"\n"}{end}' | sort)
+              echo "$list"
+              logical=$(echo "$list" | awk '$2 == "logical" && $4 == "Succeeded" { print $3 }')
+              physical=$(echo "$list" | awk '$2 == "physical" && $4 == "Succeeded" { n = $3 } END { print n }')
+              [ "$(echo "$logical" | grep -c .)" = 1 ] || { echo "expected one logical backup"; exit 1; }
+              [ -n "$physical" ] || { echo "no physical backup imported"; exit 1; }
+              kubectl -n "$NAMESPACE" create configmap import-backups \
+                --from-literal=logical="$logical" --from-literal=physical="$physical"
+
+    - name: seed-from-imported-backups
+      try:
+        - script:
+            content: |
+              set -eu
+              for kind in logical physical; do
+                backup=$(kubectl -n "$NAMESPACE" get configmap import-backups -o jsonpath="{.data.${kind}}")
+                sed "s/__BACKUP__/${backup}/" "70-${kind}-restored.yaml" | kubectl -n "$NAMESPACE" apply -f -
+              done
+
+    - name: seeded-running
+      timeouts:
+        assert: 15m
+      try:
+        - assert:
+            file: 70-logical-assert.yaml
+        - assert:
+            file: 70-physical-assert.yaml
+
+    # The logical backup was taken after row 42 and before row 43; the latest
+    # physical base backup was taken after row 42 at least.
+    - name: verify-seeded-data
+      timeouts:
+        exec: 5m
+      try:
+        - script:
+            content: |
+              set -eu
+              for inst in import-logical import-physical; do
+                rootpw=$(kubectl -n "$NAMESPACE" get secret "everest-secrets-${inst}-root" \
+                  -o jsonpath='{.data.root-password}' | base64 -d)
+                ok=0
+                for attempt in $(seq 1 12); do
+                  out=$(kubectl -n "$NAMESPACE" exec "${inst}-0" -c mariadb -- \
+                    env MYSQL_PWD="$rootpw" mariadb -u root -Nse \
+                    "SELECT GROUP_CONCAT(id ORDER BY id) FROM everest.import_probe;" 2>&1 || true)
+                  echo "${inst}: ${out}"
+                  case "$inst:$out" in
+                    import-logical:42|import-physical:42|import-physical:42,*) ok=1; break ;;
+                  esac
+                  sleep 15
+                done
+                [ "$ok" = 1 ] || { echo "${inst}: unexpected rows '${out}'"; exit 1; }
+              done
+
+    - name: reject-in-place-restore
+      try:
+        - script:
+            content: |
+              set -eu
+              backup=$(kubectl -n "$NAMESPACE" get configmap import-backups -o jsonpath='{.data.logical}')
+              sed "s/__BACKUP__/${backup}/" 75-inplace-restore.yaml | kubectl -n "$NAMESPACE" apply -f -
+        - assert:
+            file: 75-assert.yaml
+
+    # Free the nodes for the recovered replication cluster.
+    - name: delete-seeded-instances
+      try:
+        - delete:
+            ref:
+              apiVersion: backup.openeverest.io/v1alpha1
+              kind: Restore
+              name: import-inplace
+        - delete:
+            ref:
+              apiVersion: core.openeverest.io/v1alpha1
+              kind: Instance
+              name: import-logical
+        - delete:
+            ref:
+              apiVersion: core.openeverest.io/v1alpha1
+              kind: Instance
+              name: import-physical
+
+    - name: recover-from-imported-stream
+      try:
+        - script:
+            content: |
+              set -eu
+              target=$(kubectl -n "$NAMESPACE" get configmap import-target -o jsonpath='{.data.target}')
+              sed "s/__TARGET__/${target}/" 80-pitr-restored.yaml | kubectl -n "$NAMESPACE" apply -f -
+
+    - name: recovered-running
+      timeouts:
+        assert: 20m
+      try:
+        - assert:
+            file: 80-assert.yaml
+
+    # Every node holds the rows up to the target and nothing after it.
+    - name: verify-recovered-data
+      timeouts:
+        exec: 5m
+      try:
+        - script:
+            content: |
+              set -eu
+              rootpw=$(kubectl -n "$NAMESPACE" get secret everest-secrets-import-pitr-root \
+                -o jsonpath='{.data.root-password}' | base64 -d)
+              for pod in import-pitr-0 import-pitr-1; do
+                ok=0
+                for attempt in $(seq 1 12); do
+                  out=$(kubectl -n "$NAMESPACE" exec "$pod" -c mariadb -- \
+                    env MYSQL_PWD="$rootpw" mariadb -u root -Nse \
+                    "SELECT GROUP_CONCAT(id ORDER BY id) FROM everest.import_probe;" 2>&1 || true)
+                  echo "${pod}: ${out}"
+                  if [ "$out" = "42,43" ]; then
+                    ok=1; break
+                  fi
+                  sleep 15
+                done
+                [ "$ok" = 1 ] || { echo "${pod}: expected rows 42,43, got '${out}'"; exit 1; }
+              done
+
+    - name: delete-instances
+      try:
+        - delete:
+            ref:
+              apiVersion: core.openeverest.io/v1alpha1
+              kind: Instance
+              name: import-pitr
+        - wait:
+            apiVersion: k8s.mariadb.com/v1alpha1
+            kind: MariaDB
+            name: import-pitr
+            timeout: 3m
+            for:
+              deletion: {}
+
+    # Imported Backups outlive their BackupImport and keep the BackupStorage
+    # in use; delete them so the storage can be cleaned up. They are Retain,
+    # so the files stay in the bucket.
+    - name: delete-imported-backups
+      timeouts:
+        exec: 4m
+      try:
+        - script:
+            content: |
+              set -eu
+              kubectl -n "$NAMESPACE" delete backup --all --timeout=3m

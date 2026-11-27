@@ -78,6 +78,7 @@ func main() {
 		l.Error(err, "unable to create reconciler")
 		os.Exit(1)
 	}
+	p.SetClient(r.GetManager().GetClient())
 
 	if err := r.Start(ctx); err != nil {
 		l.Error(err, "unable to start reconciler")

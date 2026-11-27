@@ -1,0 +1,35 @@
+# A new Instance seeded from the imported logical backup (__BACKUP__ is
+# substituted by the test). Its credentials Secrets were created beforehand
+# from the source's passwords, since the source Instance is gone.
+apiVersion: core.openeverest.io/v1alpha1
+kind: Instance
+metadata:
+  name: import-logical
+spec:
+  providerRef:
+    name: mariadb
+  dataSource:
+    type: Backup
+    backup:
+      backupRef:
+        name: __BACKUP__
+  components:
+    engine:
+      type: mariadb
+      replicas: 1
+      resources:
+        limits:
+          cpu: "1"
+          memory: 1G
+        requests:
+          cpu: 250m
+          memory: 512M
+      storage:
+        size: 1Gi
+  backup:
+    enabled: true
+    classRef:
+      name: mariadb
+    storages:
+      - storageRef:
+          name: import-s3

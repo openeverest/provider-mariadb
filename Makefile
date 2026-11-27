@@ -212,6 +212,10 @@ test-integration-tls: ## Run TLS (spec.parameters.tls) integration tests (instal
 test-integration-pitr: ## Run point-in-time recovery integration tests (deploys SeaweedFS).
 	. ./test/vars.sh && chainsaw test --config ./test/integration/.chainsaw.yaml ./test/integration/pitr
 
+.PHONY: test-integration-import
+test-integration-import: ## Run backup import (disaster recovery) integration tests (deploys SeaweedFS).
+	. ./test/vars.sh && chainsaw test --config ./test/integration/.chainsaw.yaml ./test/integration/import
+
 .PHONY: test-integration-reinstall
 test-integration-reinstall: ## Run the uninstall/reinstall integration test (uninstalls and reinstalls the provider chart).
 	. ./test/vars.sh && chainsaw test --config ./test/integration/.chainsaw.yaml ./test/integration/reinstall
