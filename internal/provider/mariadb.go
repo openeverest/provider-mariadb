@@ -121,6 +121,7 @@ func SyncMariaDB(c *controller.Context) error {
 		desired.Spec.BootstrapFrom = existing.Spec.BootstrapFrom
 		desired.Spec.Storage.StorageClassName = existing.Spec.Storage.StorageClassName
 		approveAdditionalNames(c, existing, desired)
+		desired.Spec.UpdateStrategy.AutoUpdateDataPlane = ptr.To(approveDataPlaneUpdate(c, existing))
 	}
 
 	obj, err := toApplyObject(c, desired)
@@ -228,11 +229,11 @@ func desiredMariaDB(c *controller.Context) (*mariadbv1alpha1.MariaDB, error) {
 			Metrics:                metrics,
 			TLS:                    tls,
 			PointInTimeRecoveryRef: pitrRef,
-			// Keeps the agent/init images in lockstep with the bundled operator,
-			// and runs mariadb-upgrade on start so major version changes migrate
-			// the system schema.
+			// The agent/init images move to the operator's version only once
+			// approved (SyncMariaDB). mariadb-upgrade runs on start so major
+			// version changes migrate the system schema.
 			UpdateStrategy: mariadbv1alpha1.UpdateStrategy{
-				AutoUpdateDataPlane:       ptr.To(true),
+				AutoUpdateDataPlane:       ptr.To(false),
 				MariaDBAutoUpgradeEnabled: ptr.To(true),
 			},
 		},

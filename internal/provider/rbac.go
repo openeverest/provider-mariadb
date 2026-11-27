@@ -80,3 +80,7 @@ package provider
 // Jobs — mirror scheduled backup runs (CronJob-produced Jobs) into Backup CRs.
 // +kubebuilder:rbac:groups=batch,resources=jobs,verbs=get;list;watch
 // +kubebuilder:rbac:groups=apps,resources=statefulsets,verbs=get;list;watch
+
+// Deployments — the running operator's version, from its image, decides
+// whether a cluster's data plane is behind and needs an approved update.
+// +kubebuilder:rbac:groups=apps,resources=deployments,verbs=list;watch
