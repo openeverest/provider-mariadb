@@ -1,7 +1,9 @@
 # mariadb-operator is pinned twice: as a Go module (its API types, in go.mod)
-# and as the bundled Helm subcharts (mariadb-operator and mariadb-operator-crds in
+# and as the bundled Helm subchart (mariadb-operator in
 # charts/provider-mariadb/Chart.yaml). They are placed in one multi-ecosystem
 # group so a new operator release arrives as a single PR that bumps them together.
+# The operator CRDs are vendored at the subchart version: run `make generate` on
+# the bump PR (`make verify` fails until you do).
 # A new major version changes the module path (/v26 -> /v27) and needs a manual bump.
 version: 2
 
@@ -25,8 +27,6 @@ updates:
     directory: "/charts/provider-mariadb"
     allow:
       - dependency-name: "mariadb-operator"
-      - dependency-name: "mariadb-operator-crds"
     patterns:
       - "mariadb-operator"
-      - "mariadb-operator-crds"
     multi-ecosystem-group: "mariadb-operator"

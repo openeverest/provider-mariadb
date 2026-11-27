@@ -1,0 +1,9 @@
+{{- /*
+mariadb-operator CRDs, vendored by `make generate` at the version of the
+operator subchart. They carry helm.sh/resource-policy: keep, so helm uninstall
+leaves them (and every MariaDB, Backup, ... CR) in place, while helm upgrade
+still updates them.
+*/ -}}
+{{- if .Values.operatorCrds.enabled }}
+{{ .Files.Get "generated/operator-crds.yaml" }}
+{{- end }}

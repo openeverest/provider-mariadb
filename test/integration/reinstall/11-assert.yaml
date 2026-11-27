@@ -1,0 +1,15 @@
+# The Instance is Ready and published its connection details.
+apiVersion: core.openeverest.io/v1alpha1
+kind: Instance
+metadata:
+  name: test-instance
+status:
+  phase: Provisioned
+  (conditions[?type == 'Ready'].status | [0]): "True"
+  (conditions[?type == 'Available'].status | [0]): "True"
+---
+apiVersion: v1
+kind: Secret
+metadata:
+  name: test-instance-conn
+(base64_decode(data."admin-password") != ''): true
