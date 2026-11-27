@@ -60,6 +60,8 @@ rules:
   verbs:
   - delete
   - get
+  - list
+  - watch
 - apiGroups:
   - apps
   resources:
@@ -117,6 +119,13 @@ rules:
   - patch
   - update
   - watch
+- apiGroups:
+  - backup.openeverest.io
+  resources:
+  - backups/finalizers
+  - restores/finalizers
+  verbs:
+  - update
 - apiGroups:
   - batch
   resources:

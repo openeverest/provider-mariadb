@@ -1,0 +1,121 @@
+---
+# Reinstall suite.
+#
+# Seeds data in a running Instance, uninstalls and reinstalls the provider
+# chart, and verifies that the operator CRDs and the MariaDB CR survived the
+# uninstall and that the Instance comes back Ready with its data.
+apiVersion: chainsaw.kyverno.io/v1alpha1
+kind: Test
+metadata:
+  name: reinstall
+spec:
+  description: |
+    helm uninstall keeps the mariadb-operator CRDs and every MariaDB; a
+    reinstall picks the running database up again with its data.
+
+  # It uninstalls the provider: never run it alongside other suites.
+  concurrent: false
+
+  catch:
+    - script:
+        content: kubectl -n $NAMESPACE get instance,mariadb,statefulset,pods -o wide
+    - script:
+        content: kubectl get crd -l app.kubernetes.io/managed-by=Helm | grep k8s.mariadb.com || true
+    - script:
+        content: helm list -A
+
+  steps:
+    - name: create-instance
+      timeouts:
+        assert: 8m
+      try:
+        - apply:
+            file: 10-create-instance.yaml
+        - assert:
+            file: 11-assert.yaml
+
+    - name: seed-data
+      timeouts:
+        exec: 3m
+      try:
+        - script:
+            content: |
+              "$PROVIDER_ROOT_PATH/test/integration/reinstall/sql.sh" test-instance \
+                'CREATE DATABASE reinstall; CREATE TABLE reinstall.t (v INT); INSERT INTO reinstall.t VALUES (42);'
+
+    # The provider may live in any namespace, so locate it by label and keep
+    # its values for the reinstall.
+    - name: uninstall
+      timeouts:
+        exec: 5m
+      try:
+        - script:
+            content: |
+              set -eu
+              state="/tmp/reinstall-$NAMESPACE"
+              mkdir -p "$state"
+              ns=$(kubectl get deploy -A -l app.kubernetes.io/name=provider-mariadb \
+                -o jsonpath='{.items[0].metadata.namespace}')
+              echo "$ns" > "$state/namespace"
+              helm get values -n "$ns" provider-mariadb -o yaml > "$state/values.yaml"
+              kubectl -n "$NAMESPACE" get mariadb test-instance -o jsonpath='{.metadata.uid}' > "$state/uid"
+
+              helm uninstall -n "$ns" provider-mariadb --wait --timeout 3m
+
+              for crd in mariadbs maxscales backups physicalbackups pointintimerecoveries; do
+                kubectl get crd "$crd.k8s.mariadb.com" >/dev/null
+              done
+              uid=$(kubectl -n "$NAMESPACE" get mariadb test-instance -o jsonpath='{.metadata.uid}')
+              test "$uid" = "$(cat "$state/uid")"
+              kubectl -n "$NAMESPACE" get statefulset test-instance
+              echo "CRDs and MariaDB $uid survived the uninstall"
+
+    - name: reinstall
+      timeouts:
+        exec: 6m
+      try:
+        - script:
+            content: |
+              set -eu
+              state="/tmp/reinstall-$NAMESPACE"
+              ns=$(cat "$state/namespace")
+              helm upgrade --install -n "$ns" provider-mariadb "$PROVIDER_ROOT_PATH/charts/provider-mariadb" \
+                -f "$state/values.yaml" --wait --timeout 5m
+
+    - name: ready-with-data
+      timeouts:
+        assert: 8m
+        exec: 3m
+      try:
+        - assert:
+            file: 11-assert.yaml
+        - script:
+            content: |
+              set -eu
+              uid=$(kubectl -n "$NAMESPACE" get mariadb test-instance -o jsonpath='{.metadata.uid}')
+              test "$uid" = "$(cat "/tmp/reinstall-$NAMESPACE/uid")"
+              "$PROVIDER_ROOT_PATH/test/integration/reinstall/sql.sh" test-instance 'SELECT v FROM reinstall.t;'
+            check:
+              (contains($stdout, '42')): true
+
+    - name: delete-instance
+      try:
+        - delete:
+            ref:
+              apiVersion: core.openeverest.io/v1alpha1
+              kind: Instance
+              name: test-instance
+        - wait:
+            apiVersion: core.openeverest.io/v1alpha1
+            kind: Instance
+            name: test-instance
+            timeout: 2m
+            for:
+              deletion: {}
+        - wait:
+            apiVersion: k8s.mariadb.com/v1alpha1
+            kind: MariaDB
+            name: test-instance
+            timeout: 3m
+            for:
+              deletion: {}

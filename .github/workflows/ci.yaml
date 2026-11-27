@@ -194,3 +194,13 @@ jobs:
       make_target: test-integration-tls
       suite: tls
     secrets: inherit
+
+  test-integration-reinstall:
+    name: Integration / reinstall
+    needs: [lint, build, verify]
+    uses: ./.github/workflows/integration-test.yaml
+    with:
+      openeverest_ref: ${{ github.event_name == 'schedule' && 'main' || inputs.openeverest_ref || '' }}
+      make_target: test-integration-reinstall
+      suite: reinstall
+    secrets: inherit

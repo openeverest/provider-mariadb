@@ -113,7 +113,44 @@ helm upgrade provider-mariadb oci://ghcr.io/openeverest/charts/provider-mariadb 
 helm uninstall provider-mariadb --namespace everest-system
 ```
 
-Uninstalling the chart does **not** delete running `Instance` resources or their data.
+Uninstalling the chart does **not** delete running `Instance` resources, their
+databases or their data. The mariadb-operator CRDs carry
+`helm.sh/resource-policy: keep`, so the `MariaDB`, `MaxScale`, `Backup`,
+`PhysicalBackup` and `PointInTimeRecovery` resources stay in place, and
+reinstalling the chart with the same release name and namespace picks them up
+again. `helm upgrade` updates the CRDs.
+
+To remove everything, delete the `Instance` resources first, then the chart,
+then the CRDs:
+
+```bash
+kubectl get crd -o name | grep '\.k8s\.mariadb\.com$' | xargs kubectl delete
+```
+
+### What an upgrade restarts
+
+Upgrading the chart never restarts running database pods on its own. When the
+bundled mariadb-operator is newer than the sidecars (agent and init containers)
+running next to a Galera or replication cluster, updating them is a rolling
+restart, so the provider holds it as maintenance on each `Instance`:
+
+```bash
+kubectl get instance my-db -o jsonpath='{.status.pendingMaintenance}'
+# [{"approvalToken":"update-data-plane-to-26.10.2","severity":"RollingRestart",...}]
+kubectl patch instance my-db --type merge \
+  -p '{"spec":{"maintenance":{"approved":"update-data-plane-to-26.10.2"}}}'
+```
+
+Set `spec.maintenance.autoApproveUpTo: RollingRestart` to let such updates run
+without approval. Standalone instances have no sidecars and are never held.
+
+A pre-upgrade hook checks every `Instance` before the chart is upgraded. It
+fails the upgrade when a cluster's sidecars are older than the new operator
+supports — approve the pending update and wait for it to finish, then retry —
+and warns about maintenance still waiting for approval. When the checks pass,
+it stops the running provider and turns off the operator's automatic sidecar
+updates before the new operator starts; the upgrade then starts the new
+provider.
 
 ## Usage
 
@@ -717,6 +754,21 @@ stale — run `make generate` and commit the result.
 The provider contract (`Validate` / `Sync` / `Status` / `Cleanup`), RBAC
 markers, watches, code generation, and the backup/restore interfaces are
 documented once for all providers in [PROVIDER_DEVELOPMENT.md](https://github.com/openeverest/provider-sdk/blob/main/PROVIDER_DEVELOPMENT.md).
+
+### Disruptive changes
+
+A change the provider makes to a running cluster that restarts its pods —
+a sidecar update after an operator bump, a new default in the pod template —
+must wait for maintenance approval: call `c.RequestMaintenance` with a token
+that names the change and apply it only once that returns true, as
+`approveDataPlaneUpdate` (`internal/provider/dataplane.go`) and
+`approveAdditionalNames` (`internal/provider/tls.go`) do. New instances need no
+approval.
+
+When bumping the operator, read its upgrade guide. If it says the data plane
+*must* be updated, raise `minDataPlaneVersion` in
+`internal/provider/upgrade.go` to the release that requires it, so the
+pre-upgrade check blocks upgrades from clusters still behind it.
 
 ### Layout
 
