@@ -6,6 +6,7 @@
     - namespaces
     - persistentvolumeclaims
   verbs:
+    - deletecollection
     - get
 - apiGroups:
     - ""
