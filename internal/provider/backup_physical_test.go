@@ -57,6 +57,21 @@ func TestApplyPhysicalBackupParametersDefaultsTarget(t *testing.T) {
 	assert.Equal(t, mariadbv1alpha1.PhysicalBackupTargetPreferReplica, *spec.Target)
 }
 
+func TestApplyPhysicalBackupParametersZstd(t *testing.T) {
+	threads := int32(4)
+	var spec mariadbv1alpha1.PhysicalBackupSpec
+	applyPhysicalBackupParameters(&spec, mariadbbackup.MariadbBackupParameters{
+		Compression:        "zstd",
+		CompressionThreads: &threads,
+	})
+	assert.Equal(t, mariadbv1alpha1.CompressAlgorithm("zstd"), spec.Compression)
+	require.NotNil(t, spec.CompressionThreads)
+	assert.Equal(t, int32(4), *spec.CompressionThreads)
+
+	var unset mariadbv1alpha1.PhysicalBackupSpec
+	applyPhysicalBackupParameters(&unset, mariadbbackup.MariadbBackupParameters{Compression: "zstd"})
+	assert.Nil(t, unset.CompressionThreads)
+}
 func TestSyncBackupDispatchesToPhysical(t *testing.T) {
 	mdb := &mariadbv1alpha1.MariaDB{ObjectMeta: metav1.ObjectMeta{Name: "db", Namespace: "ns"}}
 	sdkBackup := physicalBackup("backup-1")
